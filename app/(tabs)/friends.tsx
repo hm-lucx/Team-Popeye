@@ -1,12 +1,11 @@
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-// --- Designfarben (gleiche Palette wie Home-Bildschirm) ---
+// --- Designfarben (gleiche Palette wie Gruppen- und Home-Bildschirm) ---
 const AKZENT = '#ff5959';
 const HINTERGRUND = '#F2F2F7';
 const WEISS = '#FFFFFF';
 const DUNKEL = '#111827';
 const GRAU = '#9CA3AF';
-const GRAU_HELL = '#E5E7EB';
 
 const SCHATTEN = {
   shadowColor: '#000',
@@ -16,7 +15,7 @@ const SCHATTEN = {
   elevation: 3,
 };
 
-export default function GruppenScreen() {
+export default function FreundeScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -27,24 +26,24 @@ export default function GruppenScreen() {
 
         {/* --- Seitenüberschrift --- */}
         <View style={styles.header}>
-          <Text style={styles.seitenTitel}>Gruppen</Text>
+          <Text style={styles.seitenTitel}>Freunde</Text>
         </View>
 
         {/* --- Suchleiste --- */}
         <View style={styles.suchContainer}>
-          {/* Such-Symbol als Text-Platzhalter */}
+          {/* Such-Symbol als Platzhalter-Icon */}
           <Text style={styles.suchSymbol}>🔍</Text>
           <TextInput
             style={styles.suchInput}
-            placeholder="Gruppe suchen…"
+            placeholder="Freunde suchen…"
             placeholderTextColor={GRAU}
             returnKeyType="search"
           />
         </View>
 
-        {/* --- Button: Neue Gruppe erstellen --- */}
-        <Pressable style={styles.neueGruppeButton} onPress={() => {}}>
-          <Text style={styles.neueGruppeText}>+ Neue Gruppe erstellen</Text>
+        {/* --- Button: Freund hinzufügen --- */}
+        <Pressable style={styles.hinzufuegenButton} onPress={() => {}}>
+          <Text style={styles.hinzufuegenText}>+ Freund hinzufügen</Text>
         </Pressable>
 
       </ScrollView>
@@ -96,8 +95,8 @@ const styles = StyleSheet.create({
     padding: 0,
   },
 
-  // --- Neue Gruppe Button ---
-  neueGruppeButton: {
+  // --- Freund-hinzufügen-Button ---
+  hinzufuegenButton: {
     backgroundColor: AKZENT,
     borderRadius: 14,
     paddingVertical: 15,
@@ -109,7 +108,7 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
-  neueGruppeText: {
+  hinzufuegenText: {
     color: WEISS,
     fontWeight: '700',
     fontSize: 16,
