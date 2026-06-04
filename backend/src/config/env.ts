@@ -24,12 +24,51 @@ function integerEnv(name: string, fallback: number): number {
   return parsed;
 }
 
+function booleanEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+
+  if (['0', 'false', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  throw new Error(`Environment variable ${name} must be a boolean.`);
+}
+
+function enumEnv<const T extends readonly string[]>(
+  name: string,
+  values: T,
+  fallback: T[number],
+): T[number] {
+  const raw = process.env[name];
+
+  if (!raw || raw.trim() === '') {
+    return fallback;
+  }
+
+  if ((values as readonly string[]).includes(raw)) {
+    return raw as T[number];
+  }
+
+  throw new Error(`Environment variable ${name} must be one of: ${values.join(', ')}.`);
+}
+
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
   host: process.env.HOST ?? '0.0.0.0',
   port: integerEnv('PORT', 3001),
   appBaseUrl: process.env.APP_BASE_URL ?? 'http://127.0.0.1:3001',
   databaseUrl: requireEnv('DATABASE_URL'),
+  databaseSslMode: enumEnv('DATABASE_SSL_MODE', ['disable', 'require', 'no-verify'] as const, 'disable'),
   corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:5173',
   jwtAccessSecret: requireEnv('JWT_ACCESS_SECRET'),
   jwtIssuer: process.env.JWT_ISSUER ?? 'catchup-api',
@@ -37,6 +76,8 @@ export const env = {
   accessTokenTtlMinutes: integerEnv('ACCESS_TOKEN_TTL_MINUTES', 15),
   refreshTokenTtlDays: integerEnv('REFRESH_TOKEN_TTL_DAYS', 30),
   sseHeartbeatSeconds: integerEnv('SSE_HEARTBEAT_SECONDS', 25),
+  enableScheduledJobs: booleanEnv('ENABLE_SCHEDULED_JOBS', false),
+  maintenanceSweepSeconds: integerEnv('MAINTENANCE_SWEEP_SECONDS', 30),
   callProvider: process.env.CALL_PROVIDER ?? 'mock',
   callRoomTtlMinutes: integerEnv('CALL_ROOM_TTL_MINUTES', 90),
   callJoinTokenTtlMinutes: integerEnv('CALL_JOIN_TOKEN_TTL_MINUTES', 30),

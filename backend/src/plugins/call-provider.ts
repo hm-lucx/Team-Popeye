@@ -10,6 +10,10 @@ function buildCallProvider(): CallProvider {
     return new DailyCallProvider(env.dailyApiKey, env.dailyApiUrl);
   }
 
+  if (env.callProvider !== 'mock') {
+    throw new Error(`Unsupported CALL_PROVIDER: ${env.callProvider}`);
+  }
+
   return new MockCallProvider();
 }
 

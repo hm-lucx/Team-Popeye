@@ -138,7 +138,7 @@ export async function signup(
   const passwordHash = await argon2.hash(input.password);
 
   try {
-    return await withTransaction(fastify.db, async (client) => {
+    const session = await withTransaction(fastify.db, async (client) => {
       const user = await createUser(client, {
         email,
         passwordHash,
@@ -148,6 +148,17 @@ export async function signup(
 
       return buildSession(fastify, client, user, metadata);
     });
+
+    fastify.log.info(
+      {
+        event: 'auth.signup',
+        userId: session.user.id,
+        email: session.user.email,
+      },
+      'User signed up.',
+    );
+
+    return session;
   } catch (error) {
     if (isDatabaseError(error) && error.code === '23505') {
       throw new AppError(409, 'email_already_used', 'This email is already registered.');
@@ -178,10 +189,21 @@ export async function login(
     throw new AppError(401, 'invalid_credentials', 'Email or password is incorrect.');
   }
 
-  return withTransaction(fastify.db, async (client) => {
+  const session = await withTransaction(fastify.db, async (client) => {
     await touchLastLogin(client, user.id);
     return buildSession(fastify, client, user, metadata);
   });
+
+  fastify.log.info(
+    {
+      event: 'auth.login',
+      userId: session.user.id,
+      email: session.user.email,
+    },
+    'User logged in.',
+  );
+
+  return session;
 }
 
 export async function refreshSession(

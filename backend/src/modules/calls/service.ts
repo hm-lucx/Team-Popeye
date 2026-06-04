@@ -147,6 +147,22 @@ function publishMatchChanged(
   fastify.publishUserEvent(match.userTwoId, event);
 }
 
+function publishStreakChanged(
+  fastify: FastifyInstance,
+  match: MatchForCallRecord,
+) {
+  const event = {
+    type: 'streaks.changed',
+    data: {
+      localDay: match.localDay,
+    },
+    emittedAt: new Date().toISOString(),
+  };
+
+  fastify.publishUserEvent(match.userOneId, event);
+  fastify.publishUserEvent(match.userTwoId, event);
+}
+
 async function ensureAcceptedMatch(
   fastify: FastifyInstance,
   userId: string,
@@ -291,6 +307,17 @@ export async function joinCallForMatch(
     throw new Error('Failed to load call session after join provisioning.');
   }
 
+  fastify.log.info(
+    {
+      event: 'calls.join',
+      userId,
+      matchId,
+      callSessionId: session.id,
+      provider: session.provider,
+    },
+    'Call join credentials issued.',
+  );
+
   publishCallChanged(fastify, result.match, result.callSessionId, session.status);
 
   return {
@@ -377,7 +404,21 @@ export async function handleCallEvent(
 
   if (outcome.matchStatus === 'completed') {
     publishMatchChanged(fastify, outcome.match, 'completed');
+    publishStreakChanged(fastify, outcome.match);
   }
+
+  fastify.log.info(
+    {
+      event: 'calls.event',
+      userId,
+      callSessionId: input.callSessionId,
+      action: input.event,
+      sessionStatus: session.status,
+      matchId: outcome.match.id,
+      matchStatus: outcome.matchStatus,
+    },
+    'Call event processed.',
+  );
 
   return {
     callSession: await toCallSessionView(fastify, session),

@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { createRateLimitGuard } from '../../lib/rate-limit.js';
 import {
   getMyAvailability,
   removeAvailabilitySlot,
@@ -38,6 +39,13 @@ type SetDailyStatusBody = {
   reason?: string | undefined;
 };
 
+const availabilityWriteRateLimit = createRateLimitGuard({
+  key: 'availability.write',
+  limit: 120,
+  windowMs: 60 * 60 * 1000,
+  scope: 'user_or_ip',
+});
+
 export const availabilityRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Querystring: ListAvailabilityQuery }>(
     '/me',
@@ -56,7 +64,7 @@ export const availabilityRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.put<{ Params: LocalDayParams; Body: UpsertAvailabilitySlotBody }>(
     '/slots/:localDay',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, availabilityWriteRateLimit],
       schema: {
         params: localDayParamsSchema,
         body: upsertAvailabilitySlotBodySchema,
@@ -77,7 +85,7 @@ export const availabilityRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.delete<{ Params: LocalDayParams }>(
     '/slots/:localDay',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, availabilityWriteRateLimit],
       schema: {
         params: localDayParamsSchema,
         response: {
@@ -92,7 +100,7 @@ export const availabilityRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.put<{ Params: LocalDayParams; Body: SetDailyStatusBody }>(
     '/status/:localDay',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, availabilityWriteRateLimit],
       schema: {
         params: localDayParamsSchema,
         body: setDailyStatusBodySchema,
@@ -112,7 +120,7 @@ export const availabilityRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.delete<{ Params: LocalDayParams }>(
     '/status/:localDay',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, availabilityWriteRateLimit],
       schema: {
         params: localDayParamsSchema,
         response: {

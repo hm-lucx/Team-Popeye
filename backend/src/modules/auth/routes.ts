@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
 import { AppError } from '../../lib/errors.js';
+import { createRateLimitGuard } from '../../lib/rate-limit.js';
 import {
   applySessionToReply,
   clearRefreshCookie,
@@ -30,6 +31,27 @@ type LoginBody = {
   password: string;
 };
 
+const signupRateLimit = createRateLimitGuard({
+  key: 'auth.signup',
+  limit: 10,
+  windowMs: 15 * 60 * 1000,
+  scope: 'ip',
+});
+
+const loginRateLimit = createRateLimitGuard({
+  key: 'auth.login',
+  limit: 20,
+  windowMs: 15 * 60 * 1000,
+  scope: 'ip',
+});
+
+const refreshRateLimit = createRateLimitGuard({
+  key: 'auth.refresh',
+  limit: 60,
+  windowMs: 15 * 60 * 1000,
+  scope: 'ip',
+});
+
 function requestMetadata(request: {
   headers: Record<string, unknown>;
   ip: string;
@@ -47,6 +69,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Body: SignupBody }>(
     '/signup',
     {
+      preHandler: signupRateLimit,
       schema: {
         body: signupBodySchema,
         response: {
@@ -68,6 +91,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Body: LoginBody }>(
     '/login',
     {
+      preHandler: loginRateLimit,
       schema: {
         body: loginBodySchema,
         response: {
@@ -89,6 +113,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/refresh',
     {
+      preHandler: refreshRateLimit,
       schema: {
         response: {
           200: sessionResponseSchema,

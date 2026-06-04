@@ -12,7 +12,9 @@
     "start": "node --env-file=.env dist/src/server.js",
     "check": "tsc --noEmit -p tsconfig.json",
     "migrate": "node --env-file=.env --import tsx scripts/migrate.ts",
-    "smoke:calls": "node --env-file=.env --import tsx scripts/smoke-call-flow.ts"
+    "jobs:once": "node --env-file=.env --import tsx scripts/run-maintenance.ts",
+    "smoke:calls": "node --env-file=.env --import tsx scripts/smoke-call-flow.ts",
+    "smoke:maintenance": "node --env-file=.env --import tsx scripts/smoke-maintenance.ts"
   },
   "dependencies": {
     "@fastify/cookie": "^10.0.0",

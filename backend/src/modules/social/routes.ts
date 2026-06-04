@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { createRateLimitGuard } from '../../lib/rate-limit.js';
 import {
   cancelFriendRequest,
   getFriendRequests,
@@ -28,6 +29,13 @@ type FriendRequestParams = {
 type RespondToFriendRequestBody = {
   action: 'accept' | 'decline';
 };
+
+const friendRequestWriteRateLimit = createRateLimitGuard({
+  key: 'social.friend-request.write',
+  limit: 30,
+  windowMs: 60 * 60 * 1000,
+  scope: 'user_or_ip',
+});
 
 export const socialRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get(
@@ -59,7 +67,7 @@ export const socialRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Body: CreateFriendRequestBody }>(
     '/friend-requests',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, friendRequestWriteRateLimit],
       schema: {
         body: createFriendRequestBodySchema,
         response: {
@@ -76,7 +84,7 @@ export const socialRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Params: FriendRequestParams; Body: RespondToFriendRequestBody }>(
     '/friend-requests/:requestId/respond',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, friendRequestWriteRateLimit],
       schema: {
         params: friendRequestParamsSchema,
         body: respondToFriendRequestBodySchema,
@@ -95,7 +103,7 @@ export const socialRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Params: FriendRequestParams }>(
     '/friend-requests/:requestId/cancel',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, friendRequestWriteRateLimit],
       schema: {
         params: friendRequestParamsSchema,
         response: {

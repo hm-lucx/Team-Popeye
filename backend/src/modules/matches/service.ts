@@ -203,6 +203,17 @@ export async function attemptMatch(
       status: match.status,
     });
 
+    fastify.log.info(
+      {
+        event: 'matches.created',
+        matchId: createdMatch.id,
+        userId,
+        status: match.status,
+        localDay: input.localDay,
+      },
+      'Match created.',
+    );
+
     return { match: toMatchView(match) };
   } catch (error) {
     mapMatchError(error);
@@ -241,6 +252,17 @@ export async function respondToExistingMatch(
       matchId: updatedMatch.id,
       status: updatedMatch.status,
     });
+
+    fastify.log.info(
+      {
+        event: 'matches.responded',
+        matchId: updatedMatch.id,
+        userId,
+        response: input.response,
+        status: updatedMatch.status,
+      },
+      'Match response processed.',
+    );
 
     return { match: toMatchView(match) };
   } catch (error) {

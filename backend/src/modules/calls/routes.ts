@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { createRateLimitGuard } from '../../lib/rate-limit.js';
 import {
   getCallSessionForMatch,
   handleCallEvent,
@@ -25,6 +26,13 @@ type CallEventBody = {
   event: 'joined' | 'left';
 };
 
+const callJoinRateLimit = createRateLimitGuard({
+  key: 'calls.join',
+  limit: 20,
+  windowMs: 10 * 60 * 1000,
+  scope: 'user_or_ip',
+});
+
 export const callRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Params: MatchParams }>(
     '/matches/:matchId',
@@ -43,7 +51,7 @@ export const callRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Params: MatchParams }>(
     '/matches/:matchId/join',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, callJoinRateLimit],
       schema: {
         params: matchParamsSchema,
         response: {

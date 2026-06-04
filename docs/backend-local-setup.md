@@ -9,10 +9,11 @@ Stand: `4. Juni 2026`
 - die Datenbank `catchup` wurde angelegt
 - eine lokale Backend-Umgebungsdatei liegt in `backend/.env`
 - die Backend-Abhaengigkeiten wurden installiert
-- die Migrationen `0001` bis `0003` wurden erfolgreich angewendet
+- die Migrationen `0001` bis `0005` wurden erfolgreich angewendet
 - die Health-Route wurde erfolgreich getestet
 - der lokale `signup`-Flow wurde erfolgreich getestet
 - der komplette Match-zu-Call-Flow wurde mit `mock`-Provider erfolgreich getestet
+- Maintenance, Missed-Calls und Streaks wurden lokal erfolgreich getestet
 
 ## Lokale Datenbankdaten
 
@@ -50,8 +51,8 @@ tail -f /private/tmp/catchup-postgres.log
 ## Naechste Schritte im Projekt
 
 1. `Daily` mit echten Credentials anbinden und einmal live pruefen
-2. Streaks und Missed-Call-Regeln sauber modellieren
-3. Expiry- und Background-Jobs nachziehen
+2. echte Frontend-Integration gegen `streaks`, `calls` und SSE anschliessen
+3. Observability weiter ausbauen
 4. danach Hardening, Logging und Rate Limits
 
 ## Lokaler Backend-Start
@@ -78,6 +79,32 @@ Dieser Test prueft automatisiert:
 - Call-Session-Erzeugung
 - `joined`- und `left`-Events
 - abgeschlossenen Match mit beendeter Call-Session
+
+## Lokaler Maintenance-Test
+
+```bash
+cd backend
+npm run smoke:maintenance
+```
+
+Dieser Test prueft automatisiert:
+
+- `pending -> expired`
+- `accepted -> missed`, wenn niemand joint
+- `accepted -> completed`, wenn beide gejoint haben und spaeter der Maintenance-Sweep abschliesst
+- Streak-Fortschreibung ueber einen neutralen `skipped`-Tag
+
+## One-Off-Maintenance
+
+```bash
+cd backend
+npm run jobs:once
+```
+
+Optional koennt ihr den periodischen Sweep spaeter per Env aktivieren:
+
+- `ENABLE_SCHEDULED_JOBS=true`
+- `MAINTENANCE_SWEEP_SECONDS=30`
 
 ## Wichtiger Hinweis
 

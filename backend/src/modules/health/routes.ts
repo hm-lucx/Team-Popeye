@@ -1,5 +1,7 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { env } from '../../config/env.js';
+
 export const healthRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/', async () => {
     const result = await fastify.db.query(
@@ -11,6 +13,8 @@ export const healthRoutes: FastifyPluginAsync = async (fastify) => {
       service: 'catchup-backend',
       database: result.rows[0]?.database_name ?? null,
       nowUtc: result.rows[0]?.now_utc ?? null,
+      callProvider: env.callProvider,
+      scheduledJobsEnabled: env.enableScheduledJobs,
     };
   });
 };

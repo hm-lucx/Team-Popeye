@@ -161,6 +161,17 @@ export async function saveAvailabilitySlot(
       fastify.publishUserEvent(activeMatch.userTwoId, event);
     }
 
+    fastify.log.info(
+      {
+        event: 'availability.slot.saved',
+        userId,
+        localDay: input.localDay,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+      },
+      'Availability slot saved.',
+    );
+
     return { slot };
   } catch (error) {
     mapAvailabilityError(error);
@@ -175,6 +186,18 @@ export async function removeAvailabilitySlot(
   validateLocalDay(localDay);
 
   const cleared = await clearAvailabilitySlot(fastify.db, userId, localDay);
+
+  if (cleared) {
+    fastify.log.info(
+      {
+        event: 'availability.slot.cleared',
+        userId,
+        localDay,
+      },
+      'Availability slot cleared.',
+    );
+  }
+
   return { cleared };
 }
 
@@ -202,6 +225,16 @@ export async function saveDailyStatus(
     reason,
   });
 
+  fastify.log.info(
+    {
+      event: 'availability.daily_status.saved',
+      userId,
+      localDay: input.localDay,
+      status: input.status,
+    },
+    'Daily status saved.',
+  );
+
   return { dailyStatus };
 }
 
@@ -213,5 +246,17 @@ export async function removeDailyStatus(
   validateLocalDay(localDay);
 
   const cleared = await clearDailyStatus(fastify.db, userId, localDay);
+
+  if (cleared) {
+    fastify.log.info(
+      {
+        event: 'availability.daily_status.cleared',
+        userId,
+        localDay,
+      },
+      'Daily status cleared.',
+    );
+  }
+
   return { cleared };
 }

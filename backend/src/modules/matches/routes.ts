@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 
+import { createRateLimitGuard } from '../../lib/rate-limit.js';
 import {
   attemptMatch,
   getMatch,
@@ -41,6 +42,13 @@ type AttemptMatchBody = {
   expiresInMinutes?: number | undefined;
 };
 
+const matchAttemptRateLimit = createRateLimitGuard({
+  key: 'matches.attempt',
+  limit: 60,
+  windowMs: 60 * 60 * 1000,
+  scope: 'user_or_ip',
+});
+
 export const matchRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get<{ Querystring: ListMatchesQuery }>(
     '/',
@@ -73,7 +81,7 @@ export const matchRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post<{ Body: AttemptMatchBody }>(
     '/attempt',
     {
-      preHandler: fastify.authenticate,
+      preHandler: [fastify.authenticate, matchAttemptRateLimit],
       schema: {
         body: attemptMatchBodySchema,
         response: {

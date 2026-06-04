@@ -8,6 +8,7 @@ import { callRoutes } from './modules/calls/routes.js';
 import { healthRoutes } from './modules/health/routes.js';
 import { matchRoutes } from './modules/matches/routes.js';
 import { socialRoutes } from './modules/social/routes.js';
+import { streakRoutes } from './modules/streaks/routes.js';
 import { authPlugin } from './plugins/auth.js';
 import { callProviderPlugin } from './plugins/call-provider.js';
 import { dbPlugin } from './plugins/db.js';
@@ -36,6 +37,7 @@ export async function buildApp() {
   await app.register(availabilityRoutes, { prefix: '/availability' });
   await app.register(matchRoutes, { prefix: '/matches' });
   await app.register(callRoutes, { prefix: '/calls' });
+  await app.register(streakRoutes, { prefix: '/streaks' });
 
   return app;
 }

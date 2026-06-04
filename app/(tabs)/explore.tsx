@@ -1,13 +1,16 @@
-import { SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+
 import PressableScale from '@/components/pressable-scale';
 
-// --- Designfarben (gleiche Palette wie Home-Bildschirm) ---
 const AKZENT = '#ff5959';
+const AKZENT_HELL = '#FFF0EC';
 const HINTERGRUND = '#F2F2F7';
 const WEISS = '#FFFFFF';
 const DUNKEL = '#111827';
-const GRAU = '#9CA3AF';
-const GRAU_HELL = '#E5E7EB';
+const GRAU = '#6B7280';
+const GRUEN = '#16A34A';
+const GELB = '#D97706';
 
 const SCHATTEN = {
   shadowColor: '#000',
@@ -18,38 +21,85 @@ const SCHATTEN = {
 };
 
 export default function GruppenScreen() {
+  const router = useRouter();
+
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-
-        {/* --- Seitenüberschrift --- */}
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={styles.seitenTitel}>Gruppen</Text>
+          <Text style={styles.headerText}>
+            Dieser Bereich ist bewusst noch kein halbfertiger Dummy mehr, sondern ein ehrlicher
+            Platzhalter mit funktionierenden Wegen zur restlichen App.
+          </Text>
         </View>
 
-        {/* --- Suchleiste --- */}
-        <View style={styles.suchContainer}>
-          {/* Such-Symbol als Text-Platzhalter */}
-          <Text style={styles.suchSymbol}>🔍</Text>
-          <TextInput
-            style={styles.suchInput}
-            placeholder="Gruppe suchen…"
-            placeholderTextColor={GRAU}
-            returnKeyType="search"
-          />
+        <View style={styles.heroCard}>
+          <Text style={styles.heroEyebrow}>Roadmap</Text>
+          <Text style={styles.heroTitle}>Gruppen sind als naechster Produktbaustein geplant.</Text>
+          <Text style={styles.heroText}>
+            Aktuell ist das Backend fuer 1:1 CatchUps gebaut. Sobald Gruppen modelliert sind,
+            landen hier gemeinsame Verfuegbarkeiten, kleine Crews und gruppenbasierte Streaks.
+          </Text>
         </View>
 
-        {/* --- Button: Neue Gruppe erstellen --- */}
-        <PressableScale style={styles.neueGruppeButton} onPress={() => {}}>
-          <Text style={styles.neueGruppeText}>+ Neue Gruppe erstellen</Text>
-        </PressableScale>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Was schon laeuft</Text>
+          <View style={styles.card}>
+            <RoadmapRow
+              color={GRUEN}
+              title="Auth und Freunde"
+              text="Invite-Codes, Freundschaftsanfragen und Bestaetigungen sind aktiv."
+            />
+            <RoadmapRow
+              color={GRUEN}
+              title="Verfuegbarkeit und Matching"
+              text="Slots, Heute-nicht-Status und automatisches Matching funktionieren."
+            />
+            <RoadmapRow
+              color={GELB}
+              title="Calls"
+              text="Lokal laeuft der Mock-Provider. Echte Video-UI kommt als naechstes."
+            />
+          </View>
+        </View>
 
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Bis Gruppen da sind</Text>
+          <View style={styles.actionStack}>
+            <PressableScale style={styles.primaryButton} onPress={() => router.push('/(tabs)/friends')}>
+              <Text style={styles.primaryButtonText}>Freunde aufbauen</Text>
+            </PressableScale>
+            <PressableScale style={styles.secondaryButton} onPress={() => router.push('/(tabs)/profil')}>
+              <Text style={styles.secondaryButtonText}>Verfuegbarkeit setzen</Text>
+            </PressableScale>
+            <PressableScale style={styles.secondaryButton} onPress={() => router.push('/(tabs)/verlauf')}>
+              <Text style={styles.secondaryButtonText}>Verlauf ansehen</Text>
+            </PressableScale>
+          </View>
+        </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function RoadmapRow({
+  color,
+  title,
+  text,
+}: {
+  color: string;
+  title: string;
+  text: string;
+}) {
+  return (
+    <View style={styles.roadmapRow}>
+      <View style={[styles.roadmapDot, { backgroundColor: color }]} />
+      <View style={styles.roadmapCopy}>
+        <Text style={styles.roadmapTitle}>{title}</Text>
+        <Text style={styles.roadmapText}>{text}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -60,12 +110,11 @@ const styles = StyleSheet.create({
   },
   scroll: {
     padding: 20,
-    paddingBottom: 52,
+    paddingBottom: 56,
+    gap: 16,
   },
-
-  // --- Überschrift ---
   header: {
-    marginBottom: 20,
+    gap: 8,
     marginTop: 4,
   },
   seitenTitel: {
@@ -74,45 +123,101 @@ const styles = StyleSheet.create({
     color: DUNKEL,
     letterSpacing: -0.5,
   },
-
-  // --- Suchleiste ---
-  suchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: WEISS,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+  headerText: {
+    color: GRAU,
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  heroCard: {
+    backgroundColor: AKZENT_HELL,
+    borderRadius: 22,
+    padding: 20,
     gap: 10,
-    marginBottom: 16,
+  },
+  heroEyebrow: {
+    color: AKZENT,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  heroTitle: {
+    color: DUNKEL,
+    fontSize: 24,
+    fontWeight: '800',
+    lineHeight: 30,
+  },
+  heroText: {
+    color: GRAU,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+  section: {
+    gap: 12,
+  },
+  sectionTitle: {
+    color: DUNKEL,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  card: {
+    backgroundColor: WEISS,
+    borderRadius: 20,
+    padding: 18,
+    gap: 16,
     ...SCHATTEN,
   },
-  suchSymbol: {
-    fontSize: 16,
+  roadmapRow: {
+    flexDirection: 'row',
+    gap: 12,
   },
-  suchInput: {
+  roadmapDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginTop: 6,
+  },
+  roadmapCopy: {
     flex: 1,
-    fontSize: 15,
-    color: DUNKEL,
-    padding: 0,
+    gap: 4,
   },
-
-  // --- Neue Gruppe Button ---
-  neueGruppeButton: {
+  roadmapTitle: {
+    color: DUNKEL,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  roadmapText: {
+    color: GRAU,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  actionStack: {
+    gap: 10,
+  },
+  primaryButton: {
     backgroundColor: AKZENT,
     borderRadius: 14,
     paddingVertical: 15,
-    paddingHorizontal: 24,
     alignItems: 'center',
-    shadowColor: AKZENT,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    ...SCHATTEN,
   },
-  neueGruppeText: {
+  primaryButtonText: {
     color: WEISS,
     fontWeight: '700',
-    fontSize: 16,
+    fontSize: 15,
+  },
+  secondaryButton: {
+    backgroundColor: WEISS,
+    borderRadius: 14,
+    paddingVertical: 15,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: AKZENT,
+    ...SCHATTEN,
+  },
+  secondaryButtonText: {
+    color: AKZENT,
+    fontWeight: '700',
+    fontSize: 15,
   },
 });

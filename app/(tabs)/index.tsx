@@ -1,18 +1,37 @@
 import { useRouter } from 'expo-router';
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+
 import PressableScale from '@/components/pressable-scale';
+import {
+  catchupApi,
+  CatchupApiError,
+  type CallSession,
+  type Match,
+  type StreakSummary,
+} from '@/lib/catchup-api';
+import { buildLocalDayLabel, formatTimeRange } from '@/lib/frontend-time';
+import { useRealtime } from '@/providers/realtime-provider';
+import { useSession } from '@/providers/session-provider';
 
-// --- UMSCHALTER: false = leerer Zustand (Standard), true = mit Beispieldaten ---
-const hatDaten = false;
-
-// --- Designfarben ---
 const AKZENT = '#ff5959';
 const AKZENT_HELL = '#FFF0EC';
 const HINTERGRUND = '#F2F2F7';
 const WEISS = '#FFFFFF';
 const DUNKEL = '#111827';
-const GRAU = '#9CA3AF';
-const GRUEN = '#22C55E';
+const GRAU = '#6B7280';
+const GRAU_HELL = '#E5E7EB';
+const GRUEN = '#16A34A';
+const GELB = '#D97706';
 
 const SCHATTEN = {
   shadowColor: '#000',
@@ -22,283 +41,435 @@ const SCHATTEN = {
   elevation: 3,
 };
 
-// Verschiedene Farben für Avatare – gibt jedem Freund eine eigene Farbe
-const AVATAR_FARBEN = [
-  { bg: '#FFD5C8', text: '#C0392B' },
-  { bg: '#C8E6FF', text: '#1A6FA8' },
-  { bg: '#D5F5E3', text: '#1E7E34' },
-  { bg: '#F9E4FF', text: '#7D3C98' },
-  { bg: '#FFF3CD', text: '#92660A' },
-];
-
-// --- Beispieldaten (werden nur angezeigt wenn hatDaten = true) ---
-const nutzerName = 'Philipp';
-
-const matchDaten = {
-  name: 'Sarah K.',
-  initialen: 'SK',
-  gruppe: 'Uni-Freunde',
-  letzterCallText: 'Gestern',
-  countdown: '00:14:32',
-  avatarFarbe: AVATAR_FARBEN[0],
-};
-
-const aktivFreunde = [
-  { initialen: 'LM', avatarFarbe: AVATAR_FARBEN[1] },
-  { initialen: 'TK', avatarFarbe: AVATAR_FARBEN[2] },
-  { initialen: 'JB', avatarFarbe: AVATAR_FARBEN[3] },
-];
-const gesamtFreunde = 9;
-const weitereAktiv = gesamtFreunde - aktivFreunde.length;
-
-const gruppen = [
-  { emoji: '🎓', name: 'Uni-Freunde', aktiv: 4, gesamt: 6, frequenz: 'Täglich' },
-  { emoji: '💼', name: 'Work-Crew', aktiv: 1, gesamt: 4, frequenz: '2×/Woche' },
-  { emoji: '🏃', name: 'Sport-Gruppe', aktiv: 2, gesamt: 5, frequenz: 'Wöchentlich' },
-];
-
-const letzterCallDaten = {
-  initialen: 'LM',
-  name: 'Lisa M.',
-  uhrzeit: '18:30',
-  dauer: '12 Min',
-  gruppe: 'Uni-Freunde',
-  stimmung: '😄',
-  avatarFarbe: AVATAR_FARBEN[1],
-};
-
-const streak = 5;
+function statusLabel(status: Match['status'] | StreakSummary['today']['status']) {
+  switch (status) {
+    case 'available':
+      return 'bereit fuer einen Match';
+    case 'unavailable':
+      return 'heute nicht verfuegbar';
+    case 'skipped':
+      return 'heute neutral geskippt';
+    case 'pending':
+      return 'wartet auf Antworten';
+    case 'accepted':
+      return 'bereit fuer den Call';
+    case 'declined':
+      return 'abgelehnt';
+    case 'expired':
+      return 'abgelaufen';
+    case 'completed':
+      return 'abgeschlossen';
+    case 'cancelled':
+      return 'abgebrochen';
+    case 'missed':
+      return 'verpasst';
+    default:
+      return 'noch nichts geplant';
+  }
+}
 
 export default function HomeScreen() {
-  // router erlaubt uns, programmatisch zu anderen Bildschirmen zu navigieren
   const router = useRouter();
+  const { user, withAccessToken } = useSession();
+  const { connectionState, error: realtimeError, reconnectNow, versions } = useRealtime();
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [streak, setStreak] = useState<StreakSummary | null>(null);
+  const [friendCount, setFriendCount] = useState(0);
+  const [incomingCount, setIncomingCount] = useState(0);
+  const [outgoingCount, setOutgoingCount] = useState(0);
+  const [todayMatch, setTodayMatch] = useState<Match | null>(null);
+  const [callSession, setCallSession] = useState<CallSession | null>(null);
+
+  const loadDashboard = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    setError(null);
+
+    try {
+      const streakResult = await withAccessToken((token) => catchupApi.getStreak(token));
+
+      const [friendsResult, requestResult, matchesResult] = await Promise.all([
+        withAccessToken((token) => catchupApi.getFriends(token)),
+        withAccessToken((token) => catchupApi.getFriendRequests(token)),
+        withAccessToken((token) =>
+          catchupApi.getMatches(token, {
+            localDay: streakResult.streak.today.localDay,
+          }),
+        ),
+      ]);
+
+      const match =
+        matchesResult.matches.find((item) => item.status === 'accepted') ??
+        matchesResult.matches.find((item) => item.status === 'pending') ??
+        matchesResult.matches[0] ??
+        null;
+
+      setStreak(streakResult.streak);
+      setFriendCount(friendsResult.friends.length);
+      setIncomingCount(requestResult.incoming.filter((item) => item.status === 'pending').length);
+      setOutgoingCount(requestResult.outgoing.filter((item) => item.status === 'pending').length);
+      setTodayMatch(match);
+
+      if (match && ['accepted', 'completed', 'missed'].includes(match.status)) {
+        try {
+          const callResult = await withAccessToken((token) => catchupApi.getCallSessionForMatch(token, match.id));
+          setCallSession(callResult.callSession);
+        } catch (callError) {
+          if (
+            callError instanceof CatchupApiError &&
+            (callError.code === 'call_not_ready' || callError.code === 'call_session_not_found')
+          ) {
+            setCallSession(null);
+          } else {
+            throw callError;
+          }
+        }
+      } else {
+        setCallSession(null);
+      }
+    } catch (loadError) {
+      if (loadError instanceof CatchupApiError) {
+        setError(loadError.message);
+      } else {
+        setError('Dashboard konnte nicht geladen werden.');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [withAccessToken]);
+
+  useEffect(() => {
+    if (user) {
+      void loadDashboard();
+    }
+  }, [
+    loadDashboard,
+    user,
+    versions.calls,
+    versions.friendRequests,
+    versions.matches,
+    versions.streaks,
+  ]);
+
+  async function respondToMatch(response: 'accept' | 'decline') {
+    if (!todayMatch) {
+      return;
+    }
+
+    setBusyAction(response);
+
+    try {
+      await withAccessToken((token) => catchupApi.respondToMatch(token, todayMatch.id, { response }));
+      await loadDashboard(true);
+    } catch (respondError) {
+      Alert.alert(
+        'Match konnte nicht aktualisiert werden',
+        respondError instanceof CatchupApiError
+          ? respondError.message
+          : 'Bitte versuche es gleich noch einmal.',
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function startCall() {
+    if (!todayMatch) {
+      return;
+    }
+
+    setBusyAction('join-call');
+
+    try {
+      const joined = await withAccessToken((token) => catchupApi.joinCallForMatch(token, todayMatch.id));
+      await withAccessToken((token) =>
+        catchupApi.sendCallEvent(token, joined.callSession.id, { event: 'joined' }),
+      );
+      Alert.alert(
+        joined.callSession.provider === 'mock' ? 'Mock-Call gestartet' : 'Call vorbereitet',
+        joined.callSession.provider === 'mock'
+          ? 'Der Mock-Call laeuft jetzt im Backend. Auf dem zweiten Geraet kann die andere Person ebenfalls joinen.'
+          : 'Der Call wurde vorbereitet.',
+      );
+      await loadDashboard(true);
+    } catch (joinError) {
+      Alert.alert(
+        'Call konnte nicht gestartet werden',
+        joinError instanceof CatchupApiError
+          ? joinError.message
+          : 'Bitte versuche es gleich noch einmal.',
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function leaveCall() {
+    if (!callSession) {
+      return;
+    }
+
+    setBusyAction('leave-call');
+
+    try {
+      await withAccessToken((token) =>
+        catchupApi.sendCallEvent(token, callSession.id, { event: 'left' }),
+      );
+      await loadDashboard(true);
+    } catch (leaveError) {
+      Alert.alert(
+        'Call konnte nicht beendet werden',
+        leaveError instanceof CatchupApiError
+          ? leaveError.message
+          : 'Bitte versuche es gleich noch einmal.',
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  const myParticipant = callSession?.participants.find((participant) => participant.userId === user?.id) ?? null;
+  const canLeaveCall = callSession?.status === 'active' && myParticipant?.joinedAt && !myParticipant?.leftAt;
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadDashboard(true)} />}
       >
-
-        {/* --- 1. Kopfzeile --- */}
         <View style={styles.header}>
-          <View>
+          <View style={styles.headerText}>
             <Text style={styles.appName}>CatchUp</Text>
             <Text style={styles.greeting}>
-              {hatDaten ? `Guten Morgen, ${nutzerName} 👋` : 'Willkommen 👋'}
+              {user ? `Hi ${user.displayName.split(' ')[0]}` : 'Willkommen'}
+            </Text>
+            <Text style={styles.connectionText}>
+              Realtime: {connectionState === 'open' ? 'live' : connectionState}
             </Text>
           </View>
-          {/* Profil-Avatar: antippbar → öffnet den Profil-Tab */}
-          <PressableScale onPress={() => router.push('/(tabs)/profil')}>
-            <View style={styles.profilAvatar}>
-              <Text style={styles.profilInitialen}>
-                {nutzerName.charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            {hatDaten && <View style={styles.onlineDot} />}
+          <PressableScale style={styles.profileBubble} onPress={() => router.push('/(tabs)/profil')}>
+            <Text style={styles.profileBubbleText}>
+              {user?.displayName.slice(0, 1).toUpperCase() ?? '?'}
+            </Text>
           </PressableScale>
         </View>
 
-        {/* --- 2. Dein Match heute --- */}
-        <View style={styles.abschnitt}>
-          <AbschnittKopf titel="Dein Match heute" />
+        {loading ? (
+          <View style={styles.centerCard}>
+            <ActivityIndicator color={AKZENT} />
+            <Text style={styles.loadingText}>Dashboard wird geladen…</Text>
+          </View>
+        ) : null}
 
-          {hatDaten ? (
-            // Gefüllter Zustand: Hervorgehobene Match-Karte
-            <View style={styles.matchKarte}>
-              {/* Linker Farbstreifen als Akzent */}
-              <View style={styles.matchAkzentStreifen} />
+        {error ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Backend gerade nicht erreichbar</Text>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
 
-              <View style={styles.matchInhalt}>
-                {/* Avatar + Name + Unterzeile */}
-                <View style={styles.matchKopf}>
-                  <View style={[styles.avatar, styles.avatarGross, { backgroundColor: matchDaten.avatarFarbe.bg }]}>
-                    <Text style={[styles.avatarTextGross, { color: matchDaten.avatarFarbe.text }]}>
-                      {matchDaten.initialen}
-                    </Text>
-                  </View>
-                  <View style={styles.matchTextBlock}>
-                    <Text style={styles.matchName}>{matchDaten.name}</Text>
-                    <Text style={styles.matchUnter}>
-                      {matchDaten.gruppe} · Letzter Call: {matchDaten.letzterCallText}
-                    </Text>
-                  </View>
-                </View>
+        {realtimeError && connectionState === 'error' ? (
+          <View style={styles.warningCard}>
+            <Text style={styles.warningTitle}>Realtime ist gerade weg</Text>
+            <Text style={styles.warningText}>{realtimeError}</Text>
+            <PressableScale style={styles.warningButton} onPress={reconnectNow}>
+              <Text style={styles.warningButtonText}>Neu verbinden</Text>
+            </PressableScale>
+          </View>
+        ) : null}
 
-                {/* Countdown-Box */}
-                <View style={styles.countdownBox}>
-                  <Text style={styles.countdownLabel}>bis Start</Text>
-                  <Text style={styles.countdownZahl}>{matchDaten.countdown}</Text>
-                </View>
+        {streak ? (
+          <View style={styles.heroCard}>
+            <View style={styles.heroTopRow}>
+              <View>
+                <Text style={styles.heroLabel}>Heute</Text>
+                <Text style={styles.heroDate}>{buildLocalDayLabel(streak.today.localDay)}</Text>
+              </View>
+              <View style={styles.streakPill}>
+                <Text style={styles.streakPillText}>🔥 {streak.currentStreak}</Text>
+              </View>
+            </View>
+            <Text style={styles.heroStatus}>{statusLabel(streak.today.status)}</Text>
+            <Text style={styles.heroSubtext}>
+              Längster Streak {streak.longestStreak} · nächstes Ziel{' '}
+              {streak.nextMilestone ?? 'geschafft'}
+            </Text>
+          </View>
+        ) : null}
 
-                {/* Anruf-Button */}
-                <Pressable style={styles.btnPrimary} onPress={() => {}}>
-                  <Text style={styles.btnPrimaryText}>📞  Jetzt anrufen</Text>
-                </Pressable>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Dein Match heute</Text>
 
-                {/* Sekundär-Link */}
-                <Pressable onPress={() => {}}>
-                  <Text style={styles.linkText}>Andere Zeit vorschlagen</Text>
-                </Pressable>
+          {!todayMatch ? (
+            <View style={styles.placeholderCard}>
+              <Text style={styles.placeholderTitle}>Noch kein Match</Text>
+              <Text style={styles.placeholderText}>
+                Trag zuerst Verfügbarkeit ein oder füge mehr Freunde hinzu.
+              </Text>
+              <View style={styles.inlineActions}>
+                <PressableScale style={styles.primaryButton} onPress={() => router.push('/(tabs)/profil')}>
+                  <Text style={styles.primaryButtonText}>Verfügbarkeit setzen</Text>
+                </PressableScale>
+                <PressableScale style={styles.secondaryButton} onPress={() => router.push('/(tabs)/friends')}>
+                  <Text style={styles.secondaryButtonText}>Freunde öffnen</Text>
+                </PressableScale>
               </View>
             </View>
           ) : (
-            // Leerer Zustand
-            <View style={styles.platzhalterKarte}>
-              <Text style={styles.platzhalterEmoji}>🤝</Text>
-              <Text style={styles.platzhalterTitel}>Noch kein Match</Text>
-              <Text style={styles.platzhalterText}>
-                Füge Freunde hinzu und trage deine Verfügbarkeit ein – dann findet die App ein passendes Zeitfenster.
-              </Text>
-              {/* Freunde-Tab öffnen */}
-              <PressableScale style={styles.btnPrimary} onPress={() => router.push('/(tabs)/friends')}>
-                <Text style={styles.btnPrimaryText}>Freunde hinzufügen</Text>
-              </PressableScale>
-            </View>
-          )}
-        </View>
-
-        {/* --- 3. Heute aktiv --- */}
-        <View style={styles.abschnitt}>
-          {/* Abschnittsüberschrift mit Badge */}
-          <View style={styles.abschnittKopfZeile}>
-            <Text style={styles.abschnittTitel}>Heute aktiv</Text>
-            {hatDaten && (
-              <View style={styles.badgeGruen}>
-                <Text style={styles.badgeGruenText}>{aktivFreunde.length + weitereAktiv} online</Text>
-              </View>
-            )}
-          </View>
-
-          {hatDaten ? (
-            // Gefüllter Zustand: Avatar-Reihe
-            <View style={styles.aktivContainer}>
-              <View style={styles.avatarReihe}>
-                {aktivFreunde.map((freund, index) => (
-                  <View
-                    key={index}
-                    style={[styles.avatar, { backgroundColor: freund.avatarFarbe.bg }]}
+            <View style={styles.matchCard}>
+              <View style={styles.matchTopRow}>
+                <View>
+                  <Text style={styles.matchName}>{todayMatch.counterpart.displayName}</Text>
+                  <Text style={styles.matchMeta}>
+                    {formatTimeRange(todayMatch.overlapStartsAt, todayMatch.overlapEndsAt)}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    todayMatch.status === 'accepted'
+                      ? styles.statusBadgeGreen
+                      : todayMatch.status === 'pending'
+                        ? styles.statusBadgeOrange
+                        : styles.statusBadgeGray,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.statusBadgeText,
+                      todayMatch.status === 'accepted'
+                        ? styles.statusBadgeTextGreen
+                        : todayMatch.status === 'pending'
+                          ? styles.statusBadgeTextOrange
+                          : styles.statusBadgeTextGray,
+                    ]}
                   >
-                    <Text style={[styles.avatarText, { color: freund.avatarFarbe.text }]}>
-                      {freund.initialen}
-                    </Text>
-                  </View>
-                ))}
-                {/* "+N" für nicht gezeigte Freunde */}
-                <View style={[styles.avatar, styles.avatarMehr]}>
-                  <Text style={styles.avatarMehrText}>+{weitereAktiv}</Text>
+                    {todayMatch.status}
+                  </Text>
                 </View>
               </View>
-            </View>
-          ) : (
-            <View style={styles.platzhalterKarte}>
-              <Text style={styles.platzhalterText}>Noch niemand aktiv.</Text>
-            </View>
-          )}
-        </View>
 
-        {/* --- 4. Meine Gruppen --- */}
-        <View style={styles.abschnitt}>
-          <AbschnittKopf titel="Meine Gruppen" linkText={hatDaten ? 'Alle →' : undefined} />
-
-          {hatDaten ? (
-            // Gefüllter Zustand: Liste von Gruppen-Karten
-            <View style={styles.gruppenListe}>
-              {gruppen.map((gruppe, index) => (
-                <Pressable key={index} style={styles.gruppenKarte} onPress={() => {}}>
-                  {/* Emoji-Icon */}
-                  <View style={styles.gruppenEmojiContainer}>
-                    <Text style={styles.gruppenEmoji}>{gruppe.emoji}</Text>
-                  </View>
-
-                  {/* Name + Frequenz */}
-                  <View style={styles.gruppenInfo}>
-                    <Text style={styles.gruppenName}>{gruppe.name}</Text>
-                    <Text style={styles.gruppenFrequenz}>{gruppe.frequenz}</Text>
-                  </View>
-
-                  {/* Badge "X/Y aktiv" + Chevron */}
-                  <View style={styles.gruppenRechts}>
-                    <View style={styles.badgeAktiv}>
-                      <Text style={styles.badgeAktivText}>{gruppe.aktiv}/{gruppe.gesamt} aktiv</Text>
-                    </View>
-                    <Text style={styles.chevron}>›</Text>
-                  </View>
-                </Pressable>
-              ))}
-            </View>
-          ) : (
-            <View style={styles.platzhalterKarte}>
-              <Text style={styles.platzhalterEmoji}>👥</Text>
-              <Text style={styles.platzhalterTitel}>Noch keine Gruppen</Text>
-              <Text style={styles.platzhalterText}>
-                Erstelle eine Gruppe und lad deine Freunde ein.
+              <Text style={styles.matchMeta}>
+                Du: {todayMatch.myResponse.response} · Gegenüber: {todayMatch.counterpartResponse.response}
               </Text>
-              {/* Gruppen-Tab öffnen */}
-              <PressableScale style={styles.btnPrimary} onPress={() => router.push('/(tabs)/explore')}>
-                <Text style={styles.btnPrimaryText}>Gruppe erstellen</Text>
-              </PressableScale>
+
+              {todayMatch.status === 'pending' ? (
+                <View style={styles.inlineActions}>
+                  <PressableScale
+                    style={styles.primaryButton}
+                    onPress={() => respondToMatch('accept')}
+                  >
+                    {busyAction === 'accept' ? (
+                      <ActivityIndicator color={WEISS} />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Annehmen</Text>
+                    )}
+                  </PressableScale>
+                  <PressableScale
+                    style={styles.secondaryButton}
+                    onPress={() => respondToMatch('decline')}
+                  >
+                    {busyAction === 'decline' ? (
+                      <ActivityIndicator color={AKZENT} />
+                    ) : (
+                      <Text style={styles.secondaryButtonText}>Ablehnen</Text>
+                    )}
+                  </PressableScale>
+                </View>
+              ) : null}
+
+              {todayMatch.status === 'accepted' && !canLeaveCall ? (
+                <View style={styles.inlineActions}>
+                  <PressableScale style={styles.primaryButton} onPress={startCall}>
+                    {busyAction === 'join-call' ? (
+                      <ActivityIndicator color={WEISS} />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Call starten</Text>
+                    )}
+                  </PressableScale>
+                  <PressableScale style={styles.secondaryButton} onPress={() => router.push('/(tabs)/profil')}>
+                    <Text style={styles.secondaryButtonText}>Zeit anpassen</Text>
+                  </PressableScale>
+                </View>
+              ) : null}
+
+              {canLeaveCall ? (
+                <View style={styles.callStateCard}>
+                  <Text style={styles.callStateTitle}>Mock-Call aktiv</Text>
+                  <Text style={styles.callStateText}>
+                    Session {callSession?.status} · Teilnehmerstatus {myParticipant?.status}
+                  </Text>
+                  <PressableScale style={styles.primaryButton} onPress={leaveCall}>
+                    {busyAction === 'leave-call' ? (
+                      <ActivityIndicator color={WEISS} />
+                    ) : (
+                      <Text style={styles.primaryButtonText}>Call beenden</Text>
+                    )}
+                  </PressableScale>
+                </View>
+              ) : null}
+
+              {['completed', 'missed', 'declined', 'expired'].includes(todayMatch.status) ? (
+                <Text style={styles.matchResultText}>
+                  Ergebnis: {statusLabel(todayMatch.status)}
+                </Text>
+              ) : null}
             </View>
           )}
         </View>
 
-        {/* --- 5. Letzter Call --- */}
-        <View style={styles.abschnitt}>
-          <AbschnittKopf titel="Letzter Call" />
-
-          {hatDaten ? (
-            // Gefüllter Zustand: Call-Karte
-            <View style={styles.callKarte}>
-              <View style={[styles.avatar, { backgroundColor: letzterCallDaten.avatarFarbe.bg }]}>
-                <Text style={[styles.avatarText, { color: letzterCallDaten.avatarFarbe.text }]}>
-                  {letzterCallDaten.initialen}
-                </Text>
-              </View>
-              <View style={styles.callInfo}>
-                <Text style={styles.callName}>{letzterCallDaten.name}</Text>
-                <Text style={styles.callMeta}>
-                  {letzterCallDaten.uhrzeit} Uhr · {letzterCallDaten.dauer} · {letzterCallDaten.gruppe}
-                </Text>
-              </View>
-              <Text style={styles.callStimmung}>{letzterCallDaten.stimmung}</Text>
-            </View>
-          ) : (
-            <View style={styles.platzhalterKarte}>
-              <Text style={styles.platzhalterText}>Noch keine Calls.</Text>
-            </View>
-          )}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Netzwerk heute</Text>
+          <View style={styles.metricGrid}>
+            <MetricCard label="Freunde" value={friendCount.toString()} />
+            <MetricCard label="Eingehend" value={incomingCount.toString()} accent={GELB} />
+            <MetricCard label="Ausgehend" value={outgoingCount.toString()} accent={GRUEN} />
+          </View>
+          <PressableScale style={styles.secondaryButtonFull} onPress={() => router.push('/(tabs)/friends')}>
+            <Text style={styles.secondaryButtonText}>Freunde verwalten</Text>
+          </PressableScale>
         </View>
 
-        {/* --- 6. Abschließende Zeile: Streak oder Motivation --- */}
-        {hatDaten ? (
-          <View style={styles.streakBanner}>
-            <Text style={styles.streakEmoji}>🔥</Text>
-            <View>
-              <Text style={styles.streakZahl}>{streak} Tage Streak</Text>
-              <Text style={styles.streakSub}>Morgen wartet dein nächstes Match</Text>
-            </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Produktstand</Text>
+          <View style={styles.placeholderCard}>
+            <Text style={styles.placeholderTitle}>Gruppen kommen als Nächstes</Text>
+            <Text style={styles.placeholderText}>
+              Das Frontend hängt jetzt an Auth, Friends, Availability, Matches, Calls und Streaks. Gruppen sind im Backend aktuell noch nicht modelliert.
+            </Text>
+            <PressableScale style={styles.secondaryButtonFull} onPress={() => router.push('/(tabs)/explore')}>
+              <Text style={styles.secondaryButtonText}>Gruppen-Tab ansehen</Text>
+            </PressableScale>
           </View>
-        ) : (
-          <View style={styles.footer}>
-            <Text style={styles.footerText}>Leg los – dein erster Call wartet.</Text>
-          </View>
-        )}
-
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
-// --- Wiederverwendbare Abschnitts-Kopfzeile ---
-function AbschnittKopf({ titel, linkText }: { titel: string; linkText?: string }) {
+function MetricCard({
+  label,
+  value,
+  accent = AKZENT,
+}: {
+  label: string;
+  value: string;
+  accent?: string;
+}) {
   return (
-    <View style={styles.abschnittKopfZeile}>
-      <Text style={styles.abschnittTitel}>{titel}</Text>
-      {linkText && (
-        <Pressable onPress={() => {}}>
-          <Text style={styles.abschnittLink}>{linkText}</Text>
-        </Pressable>
-      )}
+    <View style={styles.metricCard}>
+      <View style={[styles.metricDot, { backgroundColor: accent }]} />
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
     </View>
   );
 }
@@ -310,366 +481,307 @@ const styles = StyleSheet.create({
   },
   scroll: {
     padding: 20,
-    paddingBottom: 52,
+    paddingBottom: 56,
+    gap: 18,
   },
-
-  // --- Kopfzeile ---
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 28,
-    marginTop: 4,
-  },
-  appName: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: DUNKEL,
-    letterSpacing: -0.5,
-  },
-  greeting: {
-    fontSize: 14,
-    color: GRAU,
-    marginTop: 2,
-    fontWeight: '400',
-  },
-  profilAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: AKZENT,
-    justifyContent: 'center',
     alignItems: 'center',
   },
-  profilInitialen: {
+  headerText: {
+    gap: 4,
+  },
+  appName: {
+    color: AKZENT,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  connectionText: {
+    color: GRAU,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  greeting: {
+    color: DUNKEL,
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  profileBubble: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: AKZENT,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileBubbleText: {
     color: WEISS,
+    fontWeight: '800',
+    fontSize: 18,
+  },
+  centerCard: {
+    backgroundColor: WEISS,
+    borderRadius: 20,
+    padding: 20,
+    alignItems: 'center',
+    gap: 10,
+    ...SCHATTEN,
+  },
+  loadingText: {
+    color: GRAU,
+    fontSize: 14,
+  },
+  errorCard: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 18,
+    padding: 16,
+    gap: 6,
+  },
+  errorTitle: {
+    color: '#991B1B',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  errorText: {
+    color: '#B91C1C',
+    lineHeight: 20,
+  },
+  warningCard: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 18,
+    padding: 16,
+    gap: 8,
+  },
+  warningTitle: {
+    color: '#92400E',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  warningText: {
+    color: '#B45309',
+    lineHeight: 20,
+  },
+  warningButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 12,
+    backgroundColor: WEISS,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  warningButtonText: {
+    color: '#92400E',
     fontWeight: '700',
-    fontSize: 17,
   },
-  onlineDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: GRUEN,
-    borderWidth: 2,
-    borderColor: WEISS,
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
+  heroCard: {
+    backgroundColor: WEISS,
+    borderRadius: 22,
+    padding: 20,
+    gap: 10,
+    ...SCHATTEN,
   },
-
-  // --- Abschnitt-Container ---
-  abschnitt: {
-    marginBottom: 28,
-  },
-  abschnittKopfZeile: {
+  heroTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
   },
-  abschnittTitel: {
-    fontSize: 17,
+  heroLabel: {
+    color: GRAU,
+    fontSize: 13,
     fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  heroDate: {
     color: DUNKEL,
+    fontWeight: '800',
+    fontSize: 22,
+    marginTop: 2,
   },
-  abschnittLink: {
-    fontSize: 14,
+  streakPill: {
+    backgroundColor: AKZENT_HELL,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  streakPillText: {
     color: AKZENT,
-    fontWeight: '500',
+    fontWeight: '800',
   },
-
-  // --- Match-Karte ---
-  matchKarte: {
+  heroStatus: {
+    color: DUNKEL,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  heroSubtext: {
+    color: GRAU,
+    lineHeight: 20,
+  },
+  section: {
+    gap: 12,
+  },
+  sectionTitle: {
+    color: DUNKEL,
+    fontWeight: '800',
+    fontSize: 19,
+  },
+  placeholderCard: {
     backgroundColor: WEISS,
     borderRadius: 20,
-    flexDirection: 'row',
-    overflow: 'hidden',
+    padding: 18,
+    gap: 12,
     ...SCHATTEN,
   },
-  matchAkzentStreifen: {
-    width: 4,
-    backgroundColor: AKZENT,
-    borderTopLeftRadius: 20,
-    borderBottomLeftRadius: 20,
+  placeholderTitle: {
+    color: DUNKEL,
+    fontWeight: '800',
+    fontSize: 17,
   },
-  matchInhalt: {
-    flex: 1,
-    padding: 18,
-    gap: 14,
+  placeholderText: {
+    color: GRAU,
+    lineHeight: 21,
   },
-  matchKopf: {
+  inlineActions: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    flexWrap: 'wrap',
   },
-  matchTextBlock: {
-    flex: 1,
+  primaryButton: {
+    backgroundColor: AKZENT,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 140,
+    minHeight: 50,
+  },
+  primaryButtonText: {
+    color: WEISS,
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  secondaryButton: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: GRAU_HELL,
+    minWidth: 140,
+    minHeight: 50,
+  },
+  secondaryButtonFull: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: GRAU_HELL,
+    minHeight: 50,
+  },
+  secondaryButtonText: {
+    color: DUNKEL,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  matchCard: {
+    backgroundColor: WEISS,
+    borderRadius: 20,
+    padding: 18,
+    gap: 12,
+    ...SCHATTEN,
+  },
+  matchTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 12,
   },
   matchName: {
-    fontSize: 17,
-    fontWeight: '700',
     color: DUNKEL,
-  },
-  matchUnter: {
-    fontSize: 13,
-    color: GRAU,
-    marginTop: 2,
-  },
-
-  // --- Countdown ---
-  countdownBox: {
-    backgroundColor: AKZENT_HELL,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    alignItems: 'center',
-  },
-  countdownLabel: {
-    fontSize: 11,
-    color: AKZENT,
-    fontWeight: '600',
-    textTransform: 'uppercase',
-    letterSpacing: 1.2,
-    marginBottom: 4,
-  },
-  countdownZahl: {
-    fontSize: 36,
     fontWeight: '800',
-    color: AKZENT,
-    letterSpacing: 3,
-  },
-
-  // --- Platzhalter-Karte (leerer Zustand) ---
-  platzhalterKarte: {
-    backgroundColor: WEISS,
-    borderRadius: 18,
-    padding: 28,
-    alignItems: 'center',
-    gap: 10,
-    ...SCHATTEN,
-  },
-  platzhalterEmoji: {
-    fontSize: 36,
-    marginBottom: 4,
-  },
-  platzhalterTitel: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: DUNKEL,
-  },
-  platzhalterText: {
-    fontSize: 14,
-    color: GRAU,
-    textAlign: 'center',
-    lineHeight: 21,
-    marginBottom: 4,
-  },
-
-  // --- Allgemeiner Avatar ---
-  avatar: {
-    width: 46,
-    height: 46,
-    borderRadius: 23,
-    backgroundColor: '#E8E8F0',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarGross: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-  },
-  avatarText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  avatarTextGross: {
     fontSize: 18,
-    fontWeight: '700',
   },
-  avatarMehr: {
-    backgroundColor: AKZENT,
+  matchMeta: {
+    color: GRAU,
+    lineHeight: 20,
   },
-  avatarMehrText: {
-    color: WEISS,
-    fontSize: 13,
-    fontWeight: '700',
-  },
-
-  // --- Aktiv-Bereich ---
-  aktivContainer: {
-    backgroundColor: WEISS,
-    borderRadius: 18,
-    padding: 18,
-    ...SCHATTEN,
-  },
-  avatarReihe: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-
-  // --- Badge Grün (Online-Zähler) ---
-  badgeGruen: {
-    backgroundColor: '#DCFCE7',
-    borderRadius: 99,
+  statusBadge: {
+    borderRadius: 999,
     paddingHorizontal: 10,
-    paddingVertical: 3,
+    paddingVertical: 6,
   },
-  badgeGruenText: {
-    color: '#16A34A',
+  statusBadgeGreen: {
+    backgroundColor: '#DCFCE7',
+  },
+  statusBadgeOrange: {
+    backgroundColor: '#FEF3C7',
+  },
+  statusBadgeGray: {
+    backgroundColor: '#F3F4F6',
+  },
+  statusBadgeText: {
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '800',
+    textTransform: 'uppercase',
   },
-
-  // --- Gruppen ---
-  gruppenListe: {
-    gap: 10,
+  statusBadgeTextGreen: {
+    color: GRUEN,
   },
-  gruppenKarte: {
-    backgroundColor: WEISS,
+  statusBadgeTextOrange: {
+    color: GELB,
+  },
+  statusBadgeTextGray: {
+    color: GRAU,
+  },
+  matchResultText: {
+    color: DUNKEL,
+    fontWeight: '700',
+  },
+  callStateCard: {
+    backgroundColor: '#F9FAFB',
     borderRadius: 16,
     padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    ...SCHATTEN,
+    gap: 10,
   },
-  gruppenEmojiContainer: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: HINTERGRUND,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  gruppenEmoji: {
-    fontSize: 22,
-  },
-  gruppenInfo: {
-    flex: 1,
-  },
-  gruppenName: {
-    fontSize: 15,
-    fontWeight: '600',
+  callStateTitle: {
     color: DUNKEL,
+    fontWeight: '800',
   },
-  gruppenFrequenz: {
-    fontSize: 12,
+  callStateText: {
     color: GRAU,
-    marginTop: 2,
+    lineHeight: 20,
   },
-  gruppenRechts: {
-    alignItems: 'flex-end',
-    gap: 4,
+  metricGrid: {
+    flexDirection: 'row',
+    gap: 10,
   },
-  badgeAktiv: {
-    backgroundColor: '#F0FDF4',
-    borderRadius: 99,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: '#BBF7D0',
-  },
-  badgeAktivText: {
-    color: '#16A34A',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  chevron: {
-    fontSize: 18,
-    color: GRAU,
-    fontWeight: '300',
-  },
-
-  // --- Letzter Call ---
-  callKarte: {
+  metricCard: {
+    flex: 1,
     backgroundColor: WEISS,
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 16,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    gap: 8,
     ...SCHATTEN,
   },
-  callInfo: {
-    flex: 1,
+  metricDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
-  callName: {
-    fontSize: 15,
+  metricValue: {
+    color: DUNKEL,
+    fontWeight: '800',
+    fontSize: 24,
+  },
+  metricLabel: {
+    color: GRAU,
     fontWeight: '600',
-    color: DUNKEL,
-  },
-  callMeta: {
-    fontSize: 12,
-    color: GRAU,
-    marginTop: 3,
-  },
-  callStimmung: {
-    fontSize: 26,
-  },
-
-  // --- Buttons ---
-  btnPrimary: {
-    backgroundColor: AKZENT,
-    borderRadius: 14,
-    paddingVertical: 15,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-    width: '100%',
-    shadowColor: AKZENT,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  btnPrimaryText: {
-    color: WEISS,
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  linkText: {
-    color: AKZENT,
-    fontSize: 14,
-    textAlign: 'center',
-    fontWeight: '500',
-  },
-
-  // --- Streak-Banner ---
-  streakBanner: {
-    backgroundColor: WEISS,
-    borderRadius: 16,
-    padding: 18,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    borderWidth: 1,
-    borderColor: '#FED7AA',
-    ...SCHATTEN,
-  },
-  streakEmoji: {
-    fontSize: 32,
-  },
-  streakZahl: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: DUNKEL,
-  },
-  streakSub: {
-    fontSize: 13,
-    color: GRAU,
-    marginTop: 2,
-  },
-
-  // --- Footer (leerer Zustand) ---
-  footer: {
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  footerText: {
-    fontSize: 14,
-    color: GRAU,
-    textAlign: 'center',
-    fontStyle: 'italic',
   },
 });

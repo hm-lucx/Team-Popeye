@@ -1,15 +1,43 @@
-import { useState } from 'react';
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
-import PressableScale from '@/components/pressable-scale';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  RefreshControl,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
-// --- Designfarben (gleiche Palette wie alle anderen Bildschirme) ---
+import PressableScale from '@/components/pressable-scale';
+import {
+  API_BASE_URL,
+  catchupApi,
+  CatchupApiError,
+  type AvailabilitySlot,
+  type DailyStatus,
+  type StreakSummary,
+} from '@/lib/catchup-api';
+import {
+  buildIsoForLocalDay,
+  buildLocalDayLabel,
+  formatTimeRange,
+  getDeviceTimeZone,
+  getTodayLocalDay,
+} from '@/lib/frontend-time';
+import { useRealtime } from '@/providers/realtime-provider';
+import { useSession } from '@/providers/session-provider';
+
 const AKZENT = '#ff5959';
+const AKZENT_HELL = '#FFF0EC';
 const HINTERGRUND = '#F2F2F7';
 const WEISS = '#FFFFFF';
 const DUNKEL = '#111827';
-const GRAU = '#9CA3AF';
+const GRAU = '#6B7280';
 const GRAU_HELL = '#E5E7EB';
-const TRENNLINIE = '#F3F4F6';
+const GRUEN = '#16A34A';
+const GELB = '#D97706';
 
 const SCHATTEN = {
   shadowColor: '#000',
@@ -19,162 +47,402 @@ const SCHATTEN = {
   elevation: 3,
 };
 
-// --- Wochentage für den Verfügbarkeits-Picker ---
-const WOCHENTAGE = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
+function statusLabel(status: StreakSummary['today']['status']) {
+  switch (status) {
+    case 'available':
+      return 'Heute ist ein Slot gesetzt.';
+    case 'unavailable':
+      return 'Heute bist du fuer Calls abgemeldet.';
+    case 'skipped':
+      return 'Heute zaehlt neutral und unterbricht den Streak nicht.';
+    case 'pending':
+      return 'Ein Match wartet gerade auf Antworten.';
+    case 'accepted':
+      return 'Der heutige Match ist bestaetigt.';
+    case 'declined':
+      return 'Der heutige Match wurde abgelehnt.';
+    case 'expired':
+      return 'Der heutige Match ist abgelaufen.';
+    case 'completed':
+      return 'Dein heutiger Call wurde abgeschlossen.';
+    case 'cancelled':
+      return 'Der heutige Match wurde abgebrochen.';
+    case 'missed':
+      return 'Der heutige Match wurde verpasst.';
+    default:
+      return 'Noch kein Status fuer heute.';
+  }
+}
 
-// --- Einstellungs-Zeilen ---
-const EINSTELLUNGEN = [
-  { label: 'Benachrichtigungen', hinweis: 'An' },
-  { label: 'Privatsphäre', hinweis: '' },
-  { label: 'Sicherheit', hinweis: '' },
-  { label: 'Hilfe & Support', hinweis: '' },
-];
+function dailyStatusLabel(status: DailyStatus['status']) {
+  return status === 'unavailable' ? 'Heute nicht' : 'Neutral skip';
+}
 
 export default function ProfilScreen() {
-  // Speichert, welche Wochentage ausgewählt sind (als Set von Indizes)
-  const [ausgewaehlt, setAusgewaehlt] = useState<Set<number>>(new Set());
+  const { user, signOut, withAccessToken } = useSession();
+  const { connectionState, versions } = useRealtime();
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [streak, setStreak] = useState<StreakSummary | null>(null);
+  const [todaySlot, setTodaySlot] = useState<AvailabilitySlot | null>(null);
+  const [todayDailyStatus, setTodayDailyStatus] = useState<DailyStatus | null>(null);
+  const [friendCount, setFriendCount] = useState(0);
+  const [completedCallsCount, setCompletedCallsCount] = useState(0);
 
-  // Wechselt einen Tag zwischen ausgewählt und nicht ausgewählt
-  function tagUmschalten(index: number) {
-    setAusgewaehlt((vorher) => {
-      const neu = new Set(vorher);
-      if (neu.has(index)) {
-        neu.delete(index);
-      } else {
-        neu.add(index);
-      }
-      return neu;
-    });
+  const loadProfile = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    setError(null);
+
+    try {
+      const streakResult = await withAccessToken((token) => catchupApi.getStreak(token));
+      const localDay = streakResult.streak.today.localDay;
+
+      const [availabilityResult, friendsResult, matchesResult] = await Promise.all([
+        withAccessToken((token) =>
+          catchupApi.getAvailability(token, {
+            from: localDay,
+            to: localDay,
+          }),
+        ),
+        withAccessToken((token) => catchupApi.getFriends(token)),
+        withAccessToken((token) => catchupApi.getMatches(token)),
+      ]);
+
+      setStreak(streakResult.streak);
+      setTodaySlot(availabilityResult.slots[0] ?? null);
+      setTodayDailyStatus(availabilityResult.dailyStatus[0] ?? null);
+      setFriendCount(friendsResult.friends.length);
+      setCompletedCallsCount(
+        matchesResult.matches.filter((match) => match.status === 'completed').length,
+      );
+    } catch (loadError) {
+      setError(
+        loadError instanceof CatchupApiError
+          ? loadError.message
+          : 'Profil konnte gerade nicht geladen werden.',
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [withAccessToken]);
+
+  useEffect(() => {
+    if (user) {
+      void loadProfile();
+    }
+  }, [
+    loadProfile,
+    user,
+    versions.calls,
+    versions.friendRequests,
+    versions.matches,
+    versions.streaks,
+  ]);
+
+  async function savePresetSlot(
+    actionKey: string,
+    startsAt: { hour: number; minute: number },
+    endsAt: { hour: number; minute: number },
+  ) {
+    const localDay = streak?.today.localDay ?? getTodayLocalDay();
+    const timezone = streak?.today.timezone ?? getDeviceTimeZone();
+
+    setBusyAction(actionKey);
+
+    try {
+      await withAccessToken((token) =>
+        catchupApi.saveAvailabilitySlot(token, localDay, {
+          timezone,
+          startsAt: buildIsoForLocalDay(localDay, startsAt.hour, startsAt.minute),
+          endsAt: buildIsoForLocalDay(localDay, endsAt.hour, endsAt.minute),
+        }),
+      );
+      await loadProfile(true);
+    } catch (slotError) {
+      Alert.alert(
+        'Zeitfenster konnte nicht gespeichert werden',
+        slotError instanceof CatchupApiError
+          ? slotError.message
+          : 'Bitte versuche es gleich noch einmal.',
+      );
+    } finally {
+      setBusyAction(null);
+    }
   }
+
+  async function saveTodayStatus(status: DailyStatus['status']) {
+    const localDay = streak?.today.localDay ?? getTodayLocalDay();
+
+    setBusyAction(`daily:${status}`);
+
+    try {
+      await withAccessToken((token) =>
+        catchupApi.saveDailyStatus(token, localDay, { status }),
+      );
+      await loadProfile(true);
+    } catch (statusError) {
+      Alert.alert(
+        'Tagesstatus konnte nicht gesetzt werden',
+        statusError instanceof CatchupApiError
+          ? statusError.message
+          : 'Bitte versuche es gleich noch einmal.',
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function clearToday() {
+    const localDay = streak?.today.localDay ?? getTodayLocalDay();
+
+    setBusyAction('clear');
+
+    try {
+      await withAccessToken(async (token) => {
+        await catchupApi.clearAvailabilitySlot(token, localDay);
+        await catchupApi.clearDailyStatus(token, localDay);
+      });
+      await loadProfile(true);
+    } catch (clearError) {
+      Alert.alert(
+        'Heute konnte nicht zurueckgesetzt werden',
+        clearError instanceof CatchupApiError
+          ? clearError.message
+          : 'Bitte versuche es gleich noch einmal.',
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handleSignOut() {
+    setBusyAction('signout');
+
+    try {
+      await signOut();
+    } catch {
+      Alert.alert('Abmeldung fehlgeschlagen', 'Bitte versuche es gleich noch einmal.');
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  const localDayLabel = buildLocalDayLabel(streak?.today.localDay ?? getTodayLocalDay());
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadProfile(true)} />}
       >
-
-        {/* --- 1. Überschrift --- */}
         <View style={styles.header}>
           <Text style={styles.seitenTitel}>Profil</Text>
+          <Text style={styles.headerText}>
+            Hier steuerst du deine Verfuegbarkeit, deinen Tagesstatus und deinen Account.
+          </Text>
+          <Text style={styles.connectionText}>Realtime: {connectionState}</Text>
         </View>
 
-        {/* --- 2. Profil-Kopf: Avatar, Name, Unterzeile --- */}
-        <View style={styles.profilKopf}>
-          {/* Runder Avatar-Platzhalter mit "+" – antippbar mit Druck-Effekt */}
-          <PressableScale style={styles.avatarWrapper} onPress={() => {}}>
-            <View style={styles.avatarKreis}>
-              <Text style={styles.avatarInitialen}>P</Text>
+        <View style={styles.profileCard}>
+          <View style={styles.avatarKreis}>
+            <Text style={styles.avatarInitialen}>
+              {user?.displayName.slice(0, 1).toUpperCase() ?? '?'}
+            </Text>
+          </View>
+          <Text style={styles.profilName}>{user?.displayName ?? 'Du'}</Text>
+          <Text style={styles.profilUnter}>{user?.email ?? 'Noch nicht eingeloggt'}</Text>
+          <View style={styles.profileMetaGrid}>
+            <View style={styles.profileMetaPill}>
+              <Text style={styles.profileMetaLabel}>Zeitzone</Text>
+              <Text style={styles.profileMetaValue}>{user?.timezone ?? getDeviceTimeZone()}</Text>
             </View>
-            {/* Kleines Plus-Symbol unten rechts – antippbar (Platzhalter) */}
-            <Pressable style={styles.avatarPlus} onPress={() => {}}>
-              <Text style={styles.avatarPlusText}>+</Text>
-            </Pressable>
-          </PressableScale>
-
-          <Text style={styles.profilName}>Du</Text>
-          <Text style={styles.profilUnter}>Profil vervollständigen</Text>
+            <View style={styles.profileMetaPill}>
+              <Text style={styles.profileMetaLabel}>Invite-Code</Text>
+              <Text style={styles.profileMetaValue}>{user?.inviteCode ?? '---'}</Text>
+            </View>
+          </View>
         </View>
 
-        {/* --- 3. Statistik-Reihe --- */}
+        {loading ? (
+          <View style={styles.centerCard}>
+            <ActivityIndicator color={AKZENT} />
+            <Text style={styles.helperText}>Profilstatus wird geladen...</Text>
+          </View>
+        ) : null}
+
+        {error ? (
+          <View style={styles.errorCard}>
+            <Text style={styles.errorTitle}>Backend gerade nicht erreichbar</Text>
+            <Text style={styles.errorText}>{error}</Text>
+          </View>
+        ) : null}
+
         <View style={styles.statistikKarte}>
-          <View style={styles.statistikItem}>
-            <Text style={styles.statistikZahl}>0</Text>
-            <Text style={styles.statistikLabel}>Calls</Text>
-          </View>
-
-          {/* Trennlinie zwischen den Werten */}
+          <StatItem label="Calls" value={completedCallsCount.toString()} />
           <View style={styles.statistikTrenner} />
-
-          <View style={styles.statistikItem}>
-            <Text style={styles.statistikZahl}>0</Text>
-            <Text style={styles.statistikLabel}>Streak</Text>
-          </View>
-
+          <StatItem label="Streak" value={(streak?.currentStreak ?? 0).toString()} />
           <View style={styles.statistikTrenner} />
-
-          <View style={styles.statistikItem}>
-            <Text style={styles.statistikZahl}>0</Text>
-            <Text style={styles.statistikLabel}>Gruppen</Text>
-          </View>
+          <StatItem label="Freunde" value={friendCount.toString()} />
         </View>
 
-        {/* --- 4. Verfügbarkeit: Wochentags-Picker --- */}
-        <View style={styles.abschnitt}>
-          <Text style={styles.abschnittTitel}>Verfügbarkeit</Text>
-          <View style={styles.wochentagsReihe}>
-            {WOCHENTAGE.map((tag, index) => {
-              const istAusgewaehlt = ausgewaehlt.has(index);
-              return (
-                <Pressable
-                  key={tag}
-                  style={[
-                    styles.wochentagsFeld,
-                    istAusgewaehlt && styles.wochentagsAusgewaehlt,
-                  ]}
-                  onPress={() => tagUmschalten(index)}
-                >
-                  <Text
-                    style={[
-                      styles.wochentagsText,
-                      istAusgewaehlt && styles.wochentagsTextAusgewaehlt,
-                    ]}
-                  >
-                    {tag}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* --- 5. Zeitfenster --- */}
-        <View style={styles.abschnitt}>
-          <Text style={styles.abschnittTitel}>Zeitfenster</Text>
-          {/* Druck-Effekt über PressableScale, wie alle anderen Buttons */}
-          <PressableScale style={styles.zeitfensterButton} onPress={() => {}}>
-            <Text style={styles.zeitfensterText}>Zeitfenster wählen</Text>
-          </PressableScale>
-        </View>
-
-        {/* --- 6. Einstellungen --- */}
-        <View style={styles.abschnitt}>
-          <Text style={styles.abschnittTitel}>Einstellungen</Text>
-          <View style={styles.einstellungenKarte}>
-            {EINSTELLUNGEN.map((eintrag, index) => (
-              <View key={eintrag.label}>
-                <Pressable
-                  style={styles.einstellungsZeile}
-                  onPress={() => {}}
-                >
-                  <Text style={styles.einstellungsLabel}>{eintrag.label}</Text>
-                  <View style={styles.einstellungsRechts}>
-                    {/* Optionaler Hinweis-Text (z. B. "An") */}
-                    {eintrag.hinweis !== '' && (
-                      <Text style={styles.einstellungsHinweis}>{eintrag.hinweis}</Text>
-                    )}
-                    <Text style={styles.chevron}>›</Text>
-                  </View>
-                </Pressable>
-
-                {/* Trennlinie zwischen den Zeilen, nicht nach der letzten */}
-                {index < EINSTELLUNGEN.length - 1 && (
-                  <View style={styles.zeilenTrenner} />
-                )}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Heute</Text>
+          <View style={styles.todayCard}>
+            <View style={styles.todayHeader}>
+              <View>
+                <Text style={styles.todayLabel}>Lokaler Tag</Text>
+                <Text style={styles.todayDate}>{localDayLabel}</Text>
               </View>
-            ))}
+              <View style={styles.streakBadge}>
+                <Text style={styles.streakBadgeText}>🔥 {streak?.currentStreak ?? 0}</Text>
+              </View>
+            </View>
+            <Text style={styles.todayStatusTitle}>
+              {statusLabel(streak?.today.status ?? 'idle')}
+            </Text>
+            {todaySlot ? (
+              <Text style={styles.todayHint}>
+                Aktuelles Zeitfenster: {formatTimeRange(todaySlot.startsAt, todaySlot.endsAt)}
+              </Text>
+            ) : null}
+            {todayDailyStatus ? (
+              <Text style={styles.todayHint}>
+                Tagesstatus: {dailyStatusLabel(todayDailyStatus.status)}
+              </Text>
+            ) : null}
+            {!todaySlot && !todayDailyStatus ? (
+              <Text style={styles.todayHint}>
+                Wenn du fuer heute offen bist, setze einfach einen kurzen Slot.
+              </Text>
+            ) : null}
           </View>
         </View>
 
-        {/* --- 7. Abmelden-Button (optisch abgesetzt) --- */}
-        <View style={styles.abmeldenBereich}>
-          <Pressable style={styles.abmeldenButton} onPress={() => {}}>
-            <Text style={styles.abmeldenText}>Abmelden</Text>
-          </Pressable>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Schnelle Zeitfenster</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardText}>
+              Fuer den MVP setzen wir mit einem Tap ein plausibles Fenster fuer heute.
+            </Text>
+            <PressableScale
+              style={styles.primaryButton}
+              onPress={() =>
+                savePresetSlot('slot:lunch', { hour: 12, minute: 0 }, { hour: 12, minute: 15 })
+              }
+            >
+              {busyAction === 'slot:lunch' ? (
+                <ActivityIndicator color={WEISS} />
+              ) : (
+                <Text style={styles.primaryButtonText}>Lunch-Slot · 12:00 - 12:15</Text>
+              )}
+            </PressableScale>
+            <PressableScale
+              style={styles.primaryButton}
+              onPress={() =>
+                savePresetSlot('slot:afterwork', { hour: 18, minute: 0 }, { hour: 18, minute: 30 })
+              }
+            >
+              {busyAction === 'slot:afterwork' ? (
+                <ActivityIndicator color={WEISS} />
+              ) : (
+                <Text style={styles.primaryButtonText}>After Work · 18:00 - 18:30</Text>
+              )}
+            </PressableScale>
+            <PressableScale
+              style={styles.primaryButton}
+              onPress={() =>
+                savePresetSlot('slot:evening', { hour: 20, minute: 0 }, { hour: 20, minute: 30 })
+              }
+            >
+              {busyAction === 'slot:evening' ? (
+                <ActivityIndicator color={WEISS} />
+              ) : (
+                <Text style={styles.primaryButtonText}>Abends · 20:00 - 20:30</Text>
+              )}
+            </PressableScale>
+          </View>
         </View>
 
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Tagesstatus</Text>
+          <View style={styles.card}>
+            <View style={styles.inlineActions}>
+              <PressableScale
+                style={styles.secondaryButton}
+                onPress={() => saveTodayStatus('unavailable')}
+              >
+                {busyAction === 'daily:unavailable' ? (
+                  <ActivityIndicator color={AKZENT} />
+                ) : (
+                  <Text style={styles.secondaryButtonText}>Heute nicht</Text>
+                )}
+              </PressableScale>
+              <PressableScale
+                style={styles.secondaryButton}
+                onPress={() => saveTodayStatus('skipped')}
+              >
+                {busyAction === 'daily:skipped' ? (
+                  <ActivityIndicator color={AKZENT} />
+                ) : (
+                  <Text style={styles.secondaryButtonText}>Neutral skip</Text>
+                )}
+              </PressableScale>
+            </View>
+            <PressableScale style={styles.ghostButton} onPress={clearToday}>
+              {busyAction === 'clear' ? (
+                <ActivityIndicator color={DUNKEL} />
+              ) : (
+                <Text style={styles.ghostButtonText}>Heute zuruecksetzen</Text>
+              )}
+            </PressableScale>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Entwicklungsstand</Text>
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <View style={[styles.infoDot, { backgroundColor: GRUEN }]} />
+              <Text style={styles.infoText}>Auth, Freunde, Matching und Calls laufen lokal.</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <View style={[styles.infoDot, { backgroundColor: GELB }]} />
+              <Text style={styles.infoText}>API-Basis aktuell: {API_BASE_URL}</Text>
+            </View>
+            <View style={styles.infoRow}>
+              <View style={[styles.infoDot, { backgroundColor: AKZENT }]} />
+              <Text style={styles.infoText}>Gruppen und echte Video-UI kommen als naechstes.</Text>
+            </View>
+          </View>
+        </View>
+
+        <PressableScale style={styles.signOutButton} onPress={handleSignOut}>
+          {busyAction === 'signout' ? (
+            <ActivityIndicator color={AKZENT} />
+          ) : (
+            <Text style={styles.signOutText}>Abmelden</Text>
+          )}
+        </PressableScale>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function StatItem({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statistikItem}>
+      <Text style={styles.statistikZahl}>{value}</Text>
+      <Text style={styles.statistikLabel}>{label}</Text>
+    </View>
   );
 }
 
@@ -185,12 +453,11 @@ const styles = StyleSheet.create({
   },
   scroll: {
     padding: 20,
-    paddingBottom: 52,
+    paddingBottom: 56,
+    gap: 16,
   },
-
-  // --- Überschrift ---
   header: {
-    marginBottom: 24,
+    gap: 8,
     marginTop: 4,
   },
   seitenTitel: {
@@ -199,195 +466,264 @@ const styles = StyleSheet.create({
     color: DUNKEL,
     letterSpacing: -0.5,
   },
-
-  // --- Profil-Kopf ---
-  profilKopf: {
-    alignItems: 'center',
-    marginBottom: 24,
+  headerText: {
+    color: GRAU,
+    fontSize: 15,
+    lineHeight: 22,
   },
-  avatarWrapper: {
-    position: 'relative',
-    marginBottom: 12,
+  connectionText: {
+    color: GRAU,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  profileCard: {
+    backgroundColor: WEISS,
+    borderRadius: 22,
+    padding: 20,
+    alignItems: 'center',
+    gap: 8,
+    ...SCHATTEN,
   },
   avatarKreis: {
     width: 88,
     height: 88,
     borderRadius: 44,
-    backgroundColor: AKZENT,   // identische Farbe wie der kleine Avatar auf Home
+    backgroundColor: AKZENT,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarInitialen: {
     fontSize: 32,
-    color: WEISS,              // weißer Buchstabe auf rotem Hintergrund, wie auf Home
+    color: WEISS,
     fontWeight: '700',
-  },
-  avatarPlus: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: WEISS,    // weißer Kreis kontrastiert klar gegen den roten Avatar
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: HINTERGRUND,  // dezenter Rand, der den Kreis vom Avatar trennt
-  },
-  avatarPlusText: {
-    color: AKZENT,             // rotes "+" auf weißem Hintergrund – gut sichtbar
-    fontSize: 18,
-    fontWeight: '700',
-    lineHeight: 22,
   },
   profilName: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
     color: DUNKEL,
   },
   profilUnter: {
-    fontSize: 13,
+    fontSize: 14,
     color: GRAU,
-    marginTop: 4,
   },
-
-  // --- Statistik-Reihe ---
-  statistikKarte: {
+  profileMetaGrid: {
+    width: '100%',
+    gap: 10,
+    marginTop: 8,
+  },
+  profileMetaPill: {
+    borderRadius: 16,
+    backgroundColor: '#F9FAFB',
+    padding: 14,
+    borderWidth: 1,
+    borderColor: GRAU_HELL,
+  },
+  profileMetaLabel: {
+    color: GRAU,
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  profileMetaValue: {
+    color: DUNKEL,
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 6,
+  },
+  centerCard: {
     backgroundColor: WEISS,
     borderRadius: 18,
+    padding: 18,
+    alignItems: 'center',
+    gap: 10,
+    ...SCHATTEN,
+  },
+  helperText: {
+    color: GRAU,
+    fontSize: 14,
+  },
+  errorCard: {
+    backgroundColor: '#FEF2F2',
+    borderRadius: 18,
+    padding: 16,
+    gap: 6,
+  },
+  errorTitle: {
+    color: '#991B1B',
+    fontWeight: '800',
+    fontSize: 15,
+  },
+  errorText: {
+    color: '#B91C1C',
+    lineHeight: 20,
+  },
+  statistikKarte: {
+    backgroundColor: WEISS,
+    borderRadius: 20,
     flexDirection: 'row',
     paddingVertical: 18,
-    marginBottom: 28,
     ...SCHATTEN,
   },
   statistikItem: {
     flex: 1,
     alignItems: 'center',
+    gap: 4,
   },
   statistikZahl: {
-    fontSize: 22,
-    fontWeight: '800',
     color: DUNKEL,
+    fontSize: 24,
+    fontWeight: '800',
   },
   statistikLabel: {
-    fontSize: 12,
     color: GRAU,
-    marginTop: 3,
+    fontSize: 13,
+    fontWeight: '600',
   },
   statistikTrenner: {
     width: 1,
     backgroundColor: GRAU_HELL,
-    marginVertical: 4,
   },
-
-  // --- Abschnitt-Container ---
-  abschnitt: {
-    marginBottom: 28,
+  section: {
+    gap: 12,
   },
-  abschnittTitel: {
-    fontSize: 17,
-    fontWeight: '700',
+  sectionTitle: {
     color: DUNKEL,
-    marginBottom: 12,
+    fontSize: 18,
+    fontWeight: '800',
   },
-
-  // --- Wochentags-Picker ---
-  wochentagsReihe: {
+  todayCard: {
+    backgroundColor: AKZENT_HELL,
+    borderRadius: 20,
+    padding: 18,
+    gap: 10,
+  },
+  todayHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 6,
-  },
-  wochentagsFeld: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 12,
-    backgroundColor: WEISS,
     alignItems: 'center',
-    ...SCHATTEN,
   },
-  wochentagsAusgewaehlt: {
-    backgroundColor: DUNKEL,
-  },
-  wochentagsText: {
+  todayLabel: {
+    color: AKZENT,
     fontSize: 12,
-    fontWeight: '600',
-    color: GRAU,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
   },
-  wochentagsTextAusgewaehlt: {
-    color: WEISS,
-  },
-
-  // --- Zeitfenster-Button ---
-  zeitfensterButton: {
-    backgroundColor: WEISS,
-    borderRadius: 14,
-    paddingVertical: 15,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: AKZENT,
-    ...SCHATTEN,
-  },
-  zeitfensterText: {
-    color: AKZENT,
-    fontWeight: '600',
-    fontSize: 15,
-  },
-
-  // --- Einstellungen-Karte ---
-  einstellungenKarte: {
-    backgroundColor: WEISS,
-    borderRadius: 18,
-    overflow: 'hidden',
-    ...SCHATTEN,
-  },
-  einstellungsZeile: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 15,
-    paddingHorizontal: 18,
-  },
-  einstellungsLabel: {
-    fontSize: 15,
+  todayDate: {
     color: DUNKEL,
-    fontWeight: '400',
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 4,
   },
-  einstellungsRechts: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  einstellungsHinweis: {
-    fontSize: 14,
-    color: GRAU,
-  },
-  chevron: {
-    fontSize: 20,
-    color: GRAU,
-    fontWeight: '300',
-  },
-  zeilenTrenner: {
-    height: 1,
-    backgroundColor: TRENNLINIE,
-    marginLeft: 18,
-  },
-
-  // --- Abmelden ---
-  abmeldenBereich: {
-    marginTop: 8,
-  },
-  abmeldenButton: {
+  streakBadge: {
+    borderRadius: 999,
     backgroundColor: WEISS,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  streakBadgeText: {
+    color: AKZENT,
+    fontWeight: '800',
+  },
+  todayStatusTitle: {
+    color: DUNKEL,
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 22,
+  },
+  todayHint: {
+    color: GRAU,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  card: {
+    backgroundColor: WEISS,
+    borderRadius: 20,
+    padding: 18,
+    gap: 12,
+    ...SCHATTEN,
+  },
+  cardText: {
+    color: GRAU,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  primaryButton: {
+    backgroundColor: AKZENT,
     borderRadius: 14,
     paddingVertical: 15,
     alignItems: 'center',
+  },
+  primaryButtonText: {
+    color: WEISS,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  inlineActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  secondaryButton: {
+    flex: 1,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: AKZENT,
+    backgroundColor: WEISS,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  secondaryButtonText: {
+    color: AKZENT,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  ghostButton: {
+    borderRadius: 14,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  ghostButtonText: {
+    color: DUNKEL,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  infoCard: {
+    backgroundColor: WEISS,
+    borderRadius: 20,
+    padding: 18,
+    gap: 12,
     ...SCHATTEN,
   },
-  abmeldenText: {
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  infoDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  infoText: {
+    flex: 1,
+    color: DUNKEL,
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  signOutButton: {
+    borderRadius: 16,
+    backgroundColor: WEISS,
+    borderWidth: 1,
+    borderColor: GRAU_HELL,
+    paddingVertical: 16,
+    alignItems: 'center',
+    ...SCHATTEN,
+  },
+  signOutText: {
     color: AKZENT,
-    fontWeight: '600',
+    fontWeight: '800',
     fontSize: 15,
   },
 });

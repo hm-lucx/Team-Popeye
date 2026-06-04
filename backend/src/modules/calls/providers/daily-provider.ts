@@ -109,7 +109,7 @@ export class DailyCallProvider implements CallProvider {
           room_name: input.roomName,
           user_name: input.displayName,
           user_id: input.userId,
-          is_owner: true,
+          is_owner: false,
           exp: toUnixSeconds(input.expiresAt),
           eject_at_token_exp: true,
         },

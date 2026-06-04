@@ -138,6 +138,39 @@ export async function lockMatchForCallByUser(
   return result.rows[0] ?? null;
 }
 
+export async function lockMatchForCallById(
+  db: Queryable,
+  matchId: string,
+): Promise<MatchForCallRecord | null> {
+  const result = await db.query<MatchForCallRecord>(
+    `
+      select
+        m.id,
+        m.status,
+        m.local_day::text as "localDay",
+        m.overlap_starts_at as "overlapStartsAt",
+        m.overlap_ends_at as "overlapEndsAt",
+        u1.id as "userOneId",
+        u1.display_name as "userOneDisplayName",
+        u1.avatar_url as "userOneAvatarUrl",
+        u1.timezone as "userOneTimezone",
+        u2.id as "userTwoId",
+        u2.display_name as "userTwoDisplayName",
+        u2.avatar_url as "userTwoAvatarUrl",
+        u2.timezone as "userTwoTimezone"
+      from public.matches m
+      join public.profiles u1 on u1.id = m.user_one_id
+      join public.profiles u2 on u2.id = m.user_two_id
+      where m.id = $1
+      for update
+      limit 1
+    `,
+    [matchId],
+  );
+
+  return result.rows[0] ?? null;
+}
+
 export async function findCallSessionByMatchForUser(
   db: Queryable,
   userId: string,
@@ -393,6 +426,38 @@ export async function markParticipantLeft(
   );
 }
 
+export async function markJoinedParticipantsLeftIfNeeded(
+  db: Queryable,
+  callSessionId: string,
+): Promise<void> {
+  await db.query(
+    `
+      update public.call_participants
+      set
+        status = 'left',
+        left_at = coalesce(left_at, timezone('utc', now()))
+      where call_session_id = $1
+        and joined_at is not null
+    `,
+    [callSessionId],
+  );
+}
+
+export async function markParticipantsMissedIfNeverJoined(
+  db: Queryable,
+  callSessionId: string,
+): Promise<void> {
+  await db.query(
+    `
+      update public.call_participants
+      set status = 'missed'
+      where call_session_id = $1
+        and joined_at is null
+    `,
+    [callSessionId],
+  );
+}
+
 export async function updateCallSessionStatus(
   db: Queryable,
   input: {
@@ -434,6 +499,21 @@ export async function markMatchCompleted(
     `
       update public.matches
       set status = 'completed'
+      where id = $1
+        and status = 'accepted'
+    `,
+    [matchId],
+  );
+}
+
+export async function markMatchMissed(
+  db: Queryable,
+  matchId: string,
+): Promise<void> {
+  await db.query(
+    `
+      update public.matches
+      set status = 'missed'
       where id = $1
         and status = 'accepted'
     `,

@@ -221,6 +221,16 @@ export async function sendFriendRequest(
       status: record.status,
     });
 
+    fastify.log.info(
+      {
+        event: 'social.friend_request.created',
+        requestId: record.id,
+        requesterId: record.requesterId,
+        addresseeId: record.addresseeId,
+      },
+      'Friend request created.',
+    );
+
     return { request: toFriendRequestView(record) };
   } catch (error) {
     mapSocialError(error);
@@ -270,6 +280,17 @@ export async function respondToFriendRequest(
     status: request.status,
   });
 
+  fastify.log.info(
+    {
+      event: 'social.friend_request.responded',
+      requestId: request.id,
+      requesterId: request.requesterId,
+      addresseeId: request.addresseeId,
+      status: request.status,
+    },
+    'Friend request response processed.',
+  );
+
   return { request: toFriendRequestView(request) };
 }
 
@@ -310,6 +331,16 @@ export async function cancelFriendRequest(
     requestId: request.id,
     status: request.status,
   });
+
+  fastify.log.info(
+    {
+      event: 'social.friend_request.cancelled',
+      requestId: request.id,
+      requesterId: request.requesterId,
+      addresseeId: request.addresseeId,
+    },
+    'Friend request cancelled.',
+  );
 
   return { request: toFriendRequestView(request) };
 }
