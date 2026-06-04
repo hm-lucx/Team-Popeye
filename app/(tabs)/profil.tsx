@@ -131,9 +131,10 @@ export default function ProfilScreen() {
         {/* --- 5. Zeitfenster --- */}
         <View style={styles.abschnitt}>
           <Text style={styles.abschnittTitel}>Zeitfenster</Text>
-          <Pressable style={styles.zeitfensterButton} onPress={() => {}}>
+          {/* Druck-Effekt über PressableScale, wie alle anderen Buttons */}
+          <PressableScale style={styles.zeitfensterButton} onPress={() => {}}>
             <Text style={styles.zeitfensterText}>Zeitfenster wählen</Text>
-          </Pressable>
+          </PressableScale>
         </View>
 
         {/* --- 6. Einstellungen --- */}
