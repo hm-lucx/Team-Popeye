@@ -1,5 +1,6 @@
 import { useRouter } from 'expo-router';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import PressableScale from '@/components/pressable-scale';
 
 // --- UMSCHALTER: false = leerer Zustand (Standard), true = mit Beispieldaten ---
 const hatDaten = false;
@@ -88,14 +89,14 @@ export default function HomeScreen() {
             </Text>
           </View>
           {/* Profil-Avatar: antippbar → öffnet den Profil-Tab */}
-          <Pressable onPress={() => router.push('/(tabs)/profil')}>
+          <PressableScale onPress={() => router.push('/(tabs)/profil')}>
             <View style={styles.profilAvatar}>
               <Text style={styles.profilInitialen}>
                 {nutzerName.charAt(0).toUpperCase()}
               </Text>
             </View>
             {hatDaten && <View style={styles.onlineDot} />}
-          </Pressable>
+          </PressableScale>
         </View>
 
         {/* --- 2. Dein Match heute --- */}
@@ -149,9 +150,10 @@ export default function HomeScreen() {
               <Text style={styles.platzhalterText}>
                 Füge Freunde hinzu und trage deine Verfügbarkeit ein – dann findet die App ein passendes Zeitfenster.
               </Text>
-              <Pressable style={styles.btnPrimary} onPress={() => {}}>
+              {/* Freunde-Tab öffnen */}
+              <PressableScale style={styles.btnPrimary} onPress={() => router.push('/(tabs)/friends')}>
                 <Text style={styles.btnPrimaryText}>Freunde hinzufügen</Text>
-              </Pressable>
+              </PressableScale>
             </View>
           )}
         </View>
@@ -232,9 +234,10 @@ export default function HomeScreen() {
               <Text style={styles.platzhalterText}>
                 Erstelle eine Gruppe und lad deine Freunde ein.
               </Text>
-              <Pressable style={styles.btnPrimary} onPress={() => {}}>
+              {/* Gruppen-Tab öffnen */}
+              <PressableScale style={styles.btnPrimary} onPress={() => router.push('/(tabs)/explore')}>
                 <Text style={styles.btnPrimaryText}>Gruppe erstellen</Text>
-              </Pressable>
+              </PressableScale>
             </View>
           )}
         </View>

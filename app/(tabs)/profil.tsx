@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, View } from 'react-native';
+import PressableScale from '@/components/pressable-scale';
 
 // --- Designfarben (gleiche Palette wie alle anderen Bildschirme) ---
 const AKZENT = '#ff5959';
@@ -60,8 +61,8 @@ export default function ProfilScreen() {
 
         {/* --- 2. Profil-Kopf: Avatar, Name, Unterzeile --- */}
         <View style={styles.profilKopf}>
-          {/* Runder Avatar-Platzhalter mit "+" */}
-          <View style={styles.avatarWrapper}>
+          {/* Runder Avatar-Platzhalter mit "+" – antippbar mit Druck-Effekt */}
+          <PressableScale style={styles.avatarWrapper} onPress={() => {}}>
             <View style={styles.avatarKreis}>
               <Text style={styles.avatarInitialen}>P</Text>
             </View>
@@ -69,7 +70,7 @@ export default function ProfilScreen() {
             <Pressable style={styles.avatarPlus} onPress={() => {}}>
               <Text style={styles.avatarPlusText}>+</Text>
             </Pressable>
-          </View>
+          </PressableScale>
 
           <Text style={styles.profilName}>Du</Text>
           <Text style={styles.profilUnter}>Profil vervollständigen</Text>

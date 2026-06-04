@@ -1,4 +1,5 @@
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import PressableScale from '@/components/pressable-scale';
 
 // --- Designfarben (gleiche Palette wie Home-Bildschirm) ---
 const AKZENT = '#ff5959';
@@ -43,9 +44,9 @@ export default function GruppenScreen() {
         </View>
 
         {/* --- Button: Neue Gruppe erstellen --- */}
-        <Pressable style={styles.neueGruppeButton} onPress={() => {}}>
+        <PressableScale style={styles.neueGruppeButton} onPress={() => {}}>
           <Text style={styles.neueGruppeText}>+ Neue Gruppe erstellen</Text>
-        </Pressable>
+        </PressableScale>
 
       </ScrollView>
     </SafeAreaView>

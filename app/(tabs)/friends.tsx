@@ -1,4 +1,5 @@
-import { Pressable, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import PressableScale from '@/components/pressable-scale';
 
 // --- Designfarben (gleiche Palette wie Gruppen- und Home-Bildschirm) ---
 const AKZENT = '#ff5959';
@@ -42,9 +43,9 @@ export default function FreundeScreen() {
         </View>
 
         {/* --- Button: Freund hinzufügen --- */}
-        <Pressable style={styles.hinzufuegenButton} onPress={() => {}}>
+        <PressableScale style={styles.hinzufuegenButton} onPress={() => {}}>
           <Text style={styles.hinzufuegenText}>+ Freund hinzufügen</Text>
-        </Pressable>
+        </PressableScale>
 
       </ScrollView>
     </SafeAreaView>
